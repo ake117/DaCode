@@ -50,7 +50,8 @@ def build_llm(kind: str, **kwargs) -> LLMClient:
     """
     kind = (kind or "stub").lower()
     if kind == "stub":
-        return StubLLM(**kwargs)
+        allowed = {k: v for k, v in kwargs.items() if k in {"responses", "default", "fail_on"}}
+        return StubLLM(**allowed)
     if kind == "local":
         return OpenAICompatClient(
             base_url=kwargs.get("base_url", "http://127.0.0.1:18434/v1"),
