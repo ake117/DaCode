@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from dacode.config import DaCodeConfig
+from dacode.env import DEFAULT_ENV_PATHS, load_env
 from dacode.harness.models import HarnessResult
 from dacode.memory import VaultMemory
 from dacode.orchestrator import DaCodeRig
@@ -105,6 +106,11 @@ def _print_result(result: HarnessResult) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Load secrets from .env files before building the rig:
+    # the target repo's own .env first, then the canonical ~/.hermes/.env.
+    repo_hint = Path(args.repo).expanduser() if getattr(args, "repo", None) else Path.cwd()
+    load_env(repo_hint / ".env", *[p.replace("{repo}", str(repo_hint)) for p in DEFAULT_ENV_PATHS])
 
     if args.command == "layers":
         cfg = _make_config(args)

@@ -18,6 +18,31 @@ from dacode.llm.stub import StubLLM
 __all__ = ["LLMClient", "LLMError", "OpenAICompatClient", "StubLLM", "build_llm"]
 
 
+def _pi_auth_key(provider: str) -> str | None:
+    """Fall back to the Pi coding agent's auth store (~/.pi/agent/auth.json).
+
+    On this machine the OpenRouter key lives in Pi's auth file rather than the
+    environment, so DaCode reuses it instead of demanding a duplicate secret.
+    """
+    import json
+    import os
+
+    path = os.path.expanduser("~/.pi/agent/auth.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    entry = data.get(provider)
+    if isinstance(entry, dict):
+        key = entry.get("key") or entry.get("apiKey")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+    if isinstance(entry, str) and entry.strip():
+        return entry.strip()
+    return None
+
+
 def build_llm(kind: str, **kwargs) -> LLMClient:
     """Factory used by the CLI / config layer.
 
@@ -35,17 +60,19 @@ def build_llm(kind: str, **kwargs) -> LLMClient:
     if kind == "openrouter":
         import os
 
+        key = kwargs.get("api_key") or os.environ.get("OPENROUTER_API_KEY") or _pi_auth_key("openrouter")
         return OpenAICompatClient(
             base_url="https://openrouter.ai/api/v1",
             model=kwargs.get("model", "deepseek/deepseek-v4.1-flash"),
-            api_key=kwargs.get("api_key") or os.environ.get("OPENROUTER_API_KEY"),
+            api_key=key,
         )
     if kind == "openai":
         import os
 
+        key = kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY") or _pi_auth_key("openai")
         return OpenAICompatClient(
             base_url="https://api.openai.com/v1",
             model=kwargs.get("model", "gpt-4o-mini"),
-            api_key=kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY"),
+            api_key=key,
         )
     raise ValueError(f"unknown llm kind: {kind!r}")

@@ -10,5 +10,8 @@ dist/
 .dacode/
 *.dacode-*
 
+# secrets
+.env
+
 # OS
 .DS_Store
