@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dacode"
+version = "0.1.0"
+description = "DaCode — The Ultimate Autonomous Engineering Rig (Pi + Harness² + pstack + Vault + Sandbox)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "P'Ek (ake117)" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+dacode = "dacode.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dacode*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

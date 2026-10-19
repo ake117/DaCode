@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# DaCode runtime
+.dacode/
+*.dacode-*
+
+# OS
+.DS_Store
