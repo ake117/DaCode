@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from dacode.discipline import PstackCritic, check_python_test
+from dacode.discipline.critic import _parse_test_summary
 
 
 def _write(tmp_path: Path, name: str, body: str) -> Path:
@@ -56,3 +59,49 @@ def test_critic_fails_when_a_weak_test_is_present(tmp_path):
     report = PstackCritic().review_workspace(tmp_path)
     assert report.passed is False
     assert report.errors, "a weak assertion must register as an error-level finding"
+
+
+# --- generalized test-summary parsing (non-pytest suites) -------------------
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        ("3 passed, 1 failed in 0.2s", (4, 1)),
+        ("2 passed in 0.15s", (2, 0)),
+        ("90 checks, 0 failed", (90, 0)),
+        ("OK: 66 checks passed (headless)", (66, 0)),
+        ("==== 5 passed, 2 failed in 1.0s ====", (7, 2)),
+        ("1 error in 0.1s", (1, 1)),
+        ("nothing to see here", (0, 0)),
+    ],
+)
+def test_parse_test_summary_understands_common_runners(stdout, expected):
+    assert _parse_test_summary(stdout) == expected
+
+
+def test_static_scan_ignores_non_python_test_files(tmp_path):
+    """A .c file matched by the glob must not be fed to the Python AST parser."""
+    _write(tmp_path, "test_native.c", "int main(void) { return 0; }\n")
+    report = PstackCritic(test_glob="test_*.c").review_workspace(tmp_path)
+    assert "syntax_error" not in {f.check for f in report.findings}
+
+
+def test_critic_runs_a_custom_non_pytest_command(tmp_path):
+    """A custom runner printing 'N checks, M failed' is counted and passes."""
+    report = PstackCritic(
+        test_command=("bash", "-c", "echo '12 checks, 0 failed'"),
+    ).review_workspace(tmp_path)
+    assert report.tests_total == 12
+    assert report.tests_failed == 0
+    assert report.passed is True
+    assert report.exit_code == 0
+
+
+def test_critic_fails_when_custom_command_reports_failures(tmp_path):
+    report = PstackCritic(
+        test_command=("bash", "-c", "echo '12 checks, 3 failed'; exit 1"),
+    ).review_workspace(tmp_path)
+    assert report.tests_total == 12
+    assert report.tests_failed == 3
+    assert report.passed is False

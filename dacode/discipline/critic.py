@@ -70,6 +70,11 @@ class PstackCritic:
         for path in sorted(workspace.rglob(self.test_glob)):
             if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in path.parts):
                 continue
+            # The static checks are AST-based and Python-only.  A non-Python
+            # suite (C, JS, …) still gets the real test gate below, but must
+            # not be fed to the Python parser.
+            if path.suffix != ".py":
+                continue
             found = check_python_test(path)
             count += 1
             findings.extend(found)
@@ -88,7 +93,7 @@ class PstackCritic:
             return 127, "", f"test command not found: {exc}", 0, 0
         except subprocess.TimeoutExpired as exc:
             return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0
-        total, failed = _parse_pytest_summary(proc.stdout)
+        total, failed = _parse_test_summary(proc.stdout)
         return proc.returncode, proc.stdout, proc.stderr, total, failed
 
     def review_workspace(self, workspace: str | Path) -> CritiqueReport:
@@ -131,18 +136,41 @@ class PstackCritic:
         )
 
 
-def _parse_pytest_summary(stdout: str) -> tuple[int, int]:
-    """Parse pytest's last summary line, e.g. '3 passed, 1 failed in 0.2s'."""
+def _parse_test_summary(stdout: str) -> tuple[int, int]:
+    """Extract ``(total, failed)`` from a test run's stdout.
+
+    Understands pytest's summary line *and* the common custom-runner shapes, so
+    a non-Python suite (Makefile/C, JS, …) is counted correctly too::
+
+        "3 passed, 1 failed in 0.2s"        pytest
+        "2 passed in 0.15s"                 pytest, all green
+        "90 checks, 0 failed"               Makefile / C suite
+        "OK: 66 checks passed (headless)"   Makefile / C suite
+
+    Returns ``(0, 0)`` when nothing recognisable is found; the caller treats a
+    zero total as "no tests were collected".
+    """
     import re
 
-    total = 0
-    failed = 0
     for line in reversed(stdout.splitlines()):
         stripped = line.strip().strip("=").strip()
-        if "passed" in stripped or "failed" in stripped or "error" in stripped:
-            passed_m = re.search(r"(\d+) passed", stripped)
-            failed_m = re.search(r"(\d+) failed", stripped)
-            error_m = re.search(r"(\d+) error", stripped)
+        if not stripped:
+            continue
+        # "N checks, M failed"
+        m = re.search(r"(\d+)\s+checks?\s*,\s*(\d+)\s+failed", stripped)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        # "N checks passed" / "OK: N checks passed (headless)"
+        m = re.search(r"(\d+)\s+checks?\s+passed", stripped)
+        if m:
+            return int(m.group(1)), 0
+        # pytest: "3 passed, 1 failed in 0.2s"
+        passed_m = re.search(r"(\d+)\s+passed", stripped)
+        failed_m = re.search(r"(\d+)\s+failed", stripped)
+        error_m = re.search(r"(\d+)\s+errors?", stripped)
+        if passed_m or failed_m or error_m:
+            total = 0
+            failed = 0
             if passed_m:
                 total += int(passed_m.group(1))
             if failed_m:
@@ -151,5 +179,9 @@ def _parse_pytest_summary(stdout: str) -> tuple[int, int]:
             if error_m:
                 total += int(error_m.group(1))
                 failed += int(error_m.group(1))
-            break
-    return total, failed
+            return total, failed
+    return 0, 0
+
+
+# Backwards-compatible alias — the old name was pytest-specific.
+_parse_pytest_summary = _parse_test_summary

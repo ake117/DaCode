@@ -41,6 +41,17 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--model", default=None, help="model id for the chosen backend")
     run.add_argument("--executor", default=None, choices=["pi", "script"])
     run.add_argument("--script-command", default=None, help="command for --executor script")
+    run.add_argument(
+        "--test-command",
+        default=None,
+        help="shell command that runs the project's tests "
+        "(default: python -m pytest -q); run via bash -c inside the trial worktree",
+    )
+    run.add_argument(
+        "--test-glob",
+        default=None,
+        help="glob for static test scanning (default: test_*.py)",
+    )
     run.add_argument("--keep-worktree", action="store_true", help="keep losing trial worktrees")
 
     mem = sub.add_parser("memory", help="query the vault memory layer")
@@ -76,6 +87,12 @@ def _make_config(args) -> DaCodeConfig:
         cfg.executor = args.executor
     if getattr(args, "script_command", None):
         cfg.script_command = args.script_command
+    if getattr(args, "test_command", None):
+        # Run the user's test command through a shell so pipes/`&&` work, and
+        # so a non-Python suite (e.g. `make -C port/renderer test`) is one argv.
+        cfg.test_command = ("bash", "-c", args.test_command)
+    if getattr(args, "test_glob", None):
+        cfg.test_glob = args.test_glob
     if getattr(args, "keep_worktree", False):
         cfg.keep_winning_worktree = True
     return cfg

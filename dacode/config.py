@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +28,7 @@ class DaCodeConfig:
     keep_winning_worktree: bool = False
 
     test_command: tuple[str, ...] | None = None
+    test_glob: str = "test_*.py"
 
     @classmethod
     def from_env(cls, repo: str | Path | None = None) -> "DaCodeConfig":
@@ -39,7 +41,15 @@ class DaCodeConfig:
             executor=os.environ.get("DACODE_EXECUTOR", "pi"),
             budget=int(os.environ.get("DACODE_BUDGET", "2")),
             variants_per_round=int(os.environ.get("DACODE_VARIANTS", "2")),
+            test_command=_env_test_command(),
+            test_glob=os.environ.get("DACODE_TEST_GLOB", "test_*.py"),
         )
+
+
+def _env_test_command() -> tuple[str, ...] | None:
+    """Read ``DACODE_TEST_COMMAND`` as an argv tuple (shell-quoted aware)."""
+    raw = os.environ.get("DACODE_TEST_COMMAND")
+    return tuple(shlex.split(raw)) if raw else None
 
 
 def _default_vault() -> str | None:

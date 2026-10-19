@@ -50,6 +50,7 @@ class DaCodeRig:
         self.executor = executor or self._build_executor()
         self.critic = critic or PstackCritic(
             test_command=config.test_command,
+            test_glob=config.test_glob,
         )
         self.memory = memory
         if self.memory is None and config.vault is not None and Path(config.vault).is_dir():
