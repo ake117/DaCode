@@ -49,13 +49,13 @@ so the next run starts smarter. No ground-truth labels required.
 ## Install
 
 ```bash
-cd ~/AI_Projects/DaCode
+# from the repo root
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-Runtime needs on this machine: `git`, `pi` (Pi coding agent) on `PATH`, and an
-OpenRouter key in `OPENROUTER_API_KEY`.
+Runtime needs: `git`, `pi` (Pi coding agent) on `PATH`, and an OpenRouter key in
+`OPENROUTER_API_KEY`.
 
 ---
 
