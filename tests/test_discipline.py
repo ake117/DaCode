@@ -54,6 +54,24 @@ def test_critic_fails_when_no_tests_are_collected(tmp_path):
     assert "no_tests" in {f.check for f in report.findings}
 
 
+def test_critic_survives_repo_addopts_minus_q(tmp_path):
+    """A repo pyproject with ``addopts = "-q"`` must not blank the summary.
+
+    Regression: the critic's own ``-q`` compounded with the repo's ``-q``
+    into ``-qq``, pytest printed dots only, ``_parse_test_summary`` counted
+    0/0 and a fully passing suite was judged "no tests collected".
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\naddopts = "-q"\n',
+        encoding="utf-8",
+    )
+    _write(tmp_path, "test_ok.py", "def test_add():\n    assert 1 + 1 == 2\n")
+    report = PstackCritic().review_workspace(tmp_path)
+    assert report.tests_total == 1
+    assert report.tests_passed == 1
+    assert report.passed is True
+
+
 def test_critic_fails_when_a_weak_test_is_present(tmp_path):
     _write(tmp_path, "test_weak.py", "def test_a():\n    assert True\n")
     report = PstackCritic().review_workspace(tmp_path)

@@ -59,7 +59,13 @@ class PstackCritic:
         timeout: float = 300.0,
         min_score: float = 0.6,
     ) -> None:
-        self.test_command = tuple(test_command) if test_command else (sys.executable, "-m", "pytest", "-q")
+        # The gate must own its output contract: a repo pyproject that sets
+        # `addopts = "-q"` compounds with our own `-q` into `-qq` (verbosity −2),
+        # which suppresses the `N passed` summary line _parse_test_summary needs —
+        # a fully passing suite then reads as 0/0 collected ("no tests"). Clearing
+        # ini addopts keeps the gate's summary deterministic regardless of repo
+        # config; plugins still autoload, only addopts flags are cleared.
+        self.test_command = tuple(test_command) if test_command else (sys.executable, "-m", "pytest", "-q", "-o", "addopts=")
         self.test_glob = test_glob
         self.timeout = timeout
         self.min_score = min_score
