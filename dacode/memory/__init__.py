@@ -160,7 +160,7 @@ class VaultMemory:
 
     # -- writing -----------------------------------------------------------
 
-    def ingest(self, lesson: Lesson, *, folder: str = "Resources/DaCode/Lessons") -> Path:
+    def ingest(self, lesson: Lesson, *, folder: str = "Projects/DaCode/Lessons") -> Path:
         """Persist ``lesson`` as a markdown note. Returns the written path."""
         target_dir = self.vault / folder
         target_dir.mkdir(parents=True, exist_ok=True)
