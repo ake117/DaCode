@@ -39,6 +39,23 @@ def test_accepts_a_literal_behaviour_assertion(tmp_path):
     assert check_python_test(path) == []
 
 
+def test_accepts_pytest_raises_as_an_assertion(tmp_path):
+    """`with pytest.raises(...):` asserts behaviour without an `assert` statement.
+
+    Regression: the rig's own suite (test_sandbox.py, test_llm.py) was flagged
+    `assertion_free`, so every probe of the rig against itself failed the
+    critic despite a green test run.
+    """
+    body = (
+        "import pytest\n"
+        "def test_a():\n"
+        "    with pytest.raises(ValueError):\n"
+        "        raise ValueError\n"
+    )
+    path = _write(tmp_path, "test_raises.py", body)
+    assert check_python_test(path) == []
+
+
 def test_critic_passes_a_clean_workspace(tmp_path):
     _write(tmp_path, "test_ok.py", "def test_add():\n    assert 1 + 1 == 2\n")
     report = PstackCritic().review_workspace(tmp_path)

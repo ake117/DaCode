@@ -78,7 +78,9 @@ class _TestVisitor(ast.NodeVisitor):
         asserts = [
             child
             for child in ast.walk(node)
-            if isinstance(child, ast.Assert) or self._is_assert_call(child)
+            if isinstance(child, ast.Assert)
+            or self._is_assert_call(child)
+            or self._is_raises_context(child)
         ]
         if not asserts:
             self.findings.append(
@@ -109,6 +111,20 @@ class _TestVisitor(ast.NodeVisitor):
         if isinstance(func, ast.Name):
             return func.id.lower() in {"assert_that", "assertthat", "assertthat"}
         return False
+
+    @staticmethod
+    def _is_raises_context(node: ast.AST) -> bool:
+        """``with pytest.raises(...):`` asserts behaviour — an exception must fire."""
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            return False
+        return any(
+            isinstance(item.context_expr, ast.Call)
+            and (
+                (isinstance(item.context_expr.func, ast.Name) and item.context_expr.func.id == "raises")
+                or (isinstance(item.context_expr.func, ast.Attribute) and item.context_expr.func.attr == "raises")
+            )
+            for item in node.items
+        )
 
     def _check_assert(self, node: ast.Assert) -> None:
         test = node.test

@@ -240,7 +240,7 @@ def _variant_score(result: ProbeResult) -> float:
         base = result.tests_passed / result.tests_total
     bonus = 0.5 if result.critique_passed else 0.0
     exit_penalty = 0.0 if result.exit_code == 0 else 0.25
-    return round(max(0.0, base + bonus - exit_penalty), 3)
+    return round(max(0.0, min(1.0, base + bonus - exit_penalty)), 3)
 
 
 def _slug(text: str) -> str:
