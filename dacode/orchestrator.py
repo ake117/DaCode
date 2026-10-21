@@ -126,7 +126,8 @@ class DaCodeRig:
             lines += [
                 f"- tests: {best.probe.tests_passed}/{best.probe.tests_total} pass",
                 f"- critique passed: {best.probe.critique_passed}",
-                f"- trial workspace: `{best.probe.workspace}`",
+                # worktree name only — absolute scratch paths are machine-specific and ephemeral
+                f"- trial worktree: `{Path(best.probe.workspace).name}`",
             ]
         lines += ["\n## System prompt that won\n", "```", best.system_prompt.strip(), "```"]
         return Lesson(
