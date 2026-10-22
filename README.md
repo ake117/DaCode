@@ -2,7 +2,8 @@
 
 > A 5-layer coding-agent rig built from the blueprint *Ultimate Autonomous
 > Engineering Rig* — combining **Pi**, **Google Harness²**, **pstack**, an
-> **Obsidian vault memory**, and an **isolated git sandbox** into one CLI.
+> **Obsidian vault memory**, and an **isolated git sandbox** into one CLI,
+> with an optional **Jev** (TypeSafe System One) judgment layer on Compose.
 
 DaCode does not just run a prompt once. It **proposes** several ways to run the
 task, **probes** each one in its own git worktree, lets an **adversarial critic**
@@ -20,6 +21,7 @@ so the next run starts smarter. No ground-truth labels required.
 | 3 | **Executor** | `dacode/executor/` | Pi coding agent (or a script / test double) does the change |
 | 4 | **pstack Discipline** | `dacode/discipline/` | AST checks for weak tests + a real `pytest` run as the gate |
 | 5 | **Git Sandbox** | `dacode/sandbox/` | one isolated `git worktree` per trial, checkpoint + rollback |
+| + | **Jev Judge** *(optional)* | `dacode/judgment.py` | a TypeSafe **System One** decision model picks the Compose winner — `--judge jev` |
 
 ```
         ┌───────────────────────────────────────────────┐
@@ -57,6 +59,10 @@ python3 -m venv .venv
 Runtime needs: `git`, `pi` (Pi coding agent) on `PATH`, and an OpenRouter key in
 `OPENROUTER_API_KEY`.
 
+Optional: a TypeSafe key in `JEV_API_KEY` for `--judge jev` — the System One
+decision model that picks the Compose winner (fast, typed answers with
+probabilities; it never issues pass/fail verdicts).
+
 ---
 
 ## Usage
@@ -67,6 +73,9 @@ Runtime needs: `git`, `pi` (Pi coding agent) on `PATH`, and an OpenRouter key in
 
 # run a task through the full rig (Pi as executor, DeepSeek v4.1 Flash)
 OPENROUTER_API_KEY=... .venv/bin/dacode run "add a slugify() helper with tests" --budget 2
+
+# same run, plus a Jev (System One) judge picking the Compose winner
+OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --judge jev
 
 # deterministic run without an LLM (good for demos / CI)
 .venv/bin/dacode run "..." --llm stub --executor script --script-command '...'
@@ -86,9 +95,11 @@ OPENROUTER_API_KEY=... .venv/bin/dacode run "add a slugify() helper with tests" 
 | `--llm` | `stub` \| `local` \| `openrouter` \| `openai` | `openrouter` |
 | `--model` | any model id | `deepseek/deepseek-v4.1-flash` |
 | `--executor` | `pi` \| `script` | `pi` |
+| `--judge` | `jev` (unset = off) | off |
 
 Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_LLM`,
-`DACODE_MODEL`, `DACODE_EXECUTOR`, `DACODE_BUDGET`, `DACODE_VARIANTS`.
+`DACODE_MODEL`, `DACODE_EXECUTOR`, `DACODE_BUDGET`, `DACODE_VARIANTS`,
+`DACODE_JUDGE`.
 
 ---
 
@@ -103,8 +114,10 @@ Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_LLM`,
    * the executor applies the change inside it
    * the critic scans the tests and runs `pytest`
    * passing trials are checkpointed (committed) in their worktree
-3. **Compose** — the best variant is selected (LLM-assisted, with a
-   deterministic fallback to the measured ranking).
+3. **Compose** — the best variant is selected (an optional Jev System One
+   judgment, then LLM-assisted, with a deterministic fallback to the measured
+   ranking). The judge only picks among variants the gate already scored —
+   the pass/fail verdict stays with the critic.
 4. **Memory Ingestion** — if the winner passed, a `type: lesson` note is written
    into the vault under `Resources/DaCode/Lessons/`.
 
@@ -147,6 +160,7 @@ Built to the pstack rules:
 - [x] Layer 4 pstack Critic (static checks + real test gate)
 - [x] Layer 5 Git Sandbox (worktrees + checkpoints)
 - [x] CLI + end-to-end tests
+- [x] Jev (TypeSafe System One) judge for the Compose pick (`--judge jev`)
 - [ ] Semantic embedding retrieval for the vault layer
 - [ ] Parallel probing of variants (multiple worktrees at once)
 - [ ] Container/bwrap isolation on top of the worktree
