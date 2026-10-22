@@ -19,6 +19,7 @@ from dacode.executor.pi import PiExecutor
 from dacode.executor.script import ScriptExecutor
 from dacode.harness.models import HarnessResult, HarnessVariant
 from dacode.harness.optimizer import DEFAULT_SYSTEM_PROMPT, HarnessOptimizer
+from dacode.judgment import build_judge
 from dacode.llm import build_llm
 from dacode.memory import Lesson, VaultMemory
 from dacode.sandbox import GitSandbox
@@ -48,6 +49,7 @@ class DaCodeRig:
         self.llm = llm or build_llm(config.llm_kind, model=config.model, base_url=config.base_url)
         self.sandbox = sandbox or GitSandbox(config.repo, config.sandbox_root)
         self.executor = executor or self._build_executor()
+        self.judge = build_judge(config.judge)
         self.critic = critic or PstackCritic(
             test_command=config.test_command,
             test_glob=config.test_glob,
@@ -61,6 +63,7 @@ class DaCodeRig:
             executor=self.executor,
             critic=self.critic,
             memory=self.memory,
+            judge=self.judge,
             budget=config.budget,
             variants_per_round=config.variants_per_round,
             keep_winning_worktree=config.keep_winning_worktree,

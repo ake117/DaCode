@@ -53,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="glob for static test scanning (default: test_*.py)",
     )
     run.add_argument("--keep-worktree", action="store_true", help="keep losing trial worktrees")
+    run.add_argument(
+        "--judge",
+        default=None,
+        help="bounded-decision judge for compose: 'jev' = TypeSafe System One "
+        "(unset = off)",
+    )
 
     mem = sub.add_parser("memory", help="query the vault memory layer")
     mem_sub = mem.add_subparsers(dest="mem_command", required=True)
@@ -95,6 +101,8 @@ def _make_config(args) -> DaCodeConfig:
         cfg.test_glob = args.test_glob
     if getattr(args, "keep_worktree", False):
         cfg.keep_winning_worktree = True
+    if getattr(args, "judge", None):
+        cfg.judge = args.judge
     return cfg
 
 

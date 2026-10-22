@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from typing import TYPE_CHECKING
 
 from dacode.harness.models import HarnessResult, HarnessVariant, ProbeResult
@@ -22,6 +23,7 @@ from dacode.harness.models import HarnessResult, HarnessVariant, ProbeResult
 if TYPE_CHECKING:
     from dacode.discipline.critic import PstackCritic
     from dacode.executor.base import Executor
+    from dacode.judgment import JevJudge
     from dacode.llm.base import LLMClient
     from dacode.memory import VaultMemory
     from dacode.sandbox import GitSandbox
@@ -59,6 +61,7 @@ class HarnessOptimizer:
         executor: "Executor",
         critic: "PstackCritic",
         memory: "VaultMemory | None" = None,
+        judge: "JevJudge | None" = None,
         *,
         budget: int = 2,
         variants_per_round: int = 2,
@@ -70,6 +73,7 @@ class HarnessOptimizer:
         self.executor = executor
         self.critic = critic
         self.memory = memory
+        self.judge = judge
         self.budget = max(1, budget)
         self.variants_per_round = max(1, variants_per_round)
         self.base_prompt = base_prompt
@@ -153,7 +157,7 @@ class HarnessOptimizer:
     # -- compose -----------------------------------------------------------
 
     def compose(self, task: str, variants: list[HarnessVariant]) -> HarnessVariant:
-        """Pick the best variant — LLM-assisted, with a deterministic fallback."""
+        """Pick the best variant — Jev judgment, LLM-assisted, deterministic fallback."""
         if not variants:
             raise ValueError("compose() called with no variants")
         ranked = sorted(variants, key=lambda v: v.score or 0.0, reverse=True)
@@ -165,6 +169,40 @@ class HarnessOptimizer:
             f"passed={v.probe.critique_passed if v.probe else '?'}"
             for v in ranked
         )
+        # System One judgment (Jev): a bounded pick among probed variants with
+        # typed probabilities. It never issues pass/fail verdicts — the critic
+        # gate stays the only quality authority. A failure falls through to the
+        # reasoning-model pick, then to the measured ranking.
+        if self.judge is not None and len(ranked) > 1:
+            try:
+                pick, confidence = self.judge.choice(
+                    state=(
+                        f"Task:\n{task}\n\nProbed harness variants "
+                        f"(deterministic score order, best first):\n{table}"
+                    ),
+                    instructions=(
+                        "Which probed harness variant is the single best "
+                        "implementation of the task? Prefer passing tests, then "
+                        "fewer critique errors, then higher score. Answer with "
+                        "the variant id."
+                    ),
+                    criteria={
+                        v.id: (
+                            f"label={v.label!r}; score={v.score}; "
+                            f"tests={v.probe.tests_passed if v.probe else '?'}/"
+                            f"{v.probe.tests_total if v.probe else '?'}; "
+                            f"critique_passed={v.probe.critique_passed if v.probe else '?'}"
+                        )
+                        for v in ranked
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - a judge failure must not kill the run
+                print(f"[judge] jev pick failed: {exc}", file=sys.stderr)
+                pick = None
+            if pick is not None:
+                chosen = next((v for v in variants if v.id == pick), None)
+                if chosen is not None:
+                    return chosen
         user = f"Task:\n{task}\n\nProbed variants (best first):\n{table}\n\nPick the best."
         try:
             raw = self.llm.complete(_COMPOSE_SYSTEM, user)

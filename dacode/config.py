@@ -27,6 +27,8 @@ class DaCodeConfig:
     variants_per_round: int = 2
     keep_winning_worktree: bool = False
 
+    judge: str | None = None  # None = off; "jev" = TypeSafe System One judge
+
     test_command: tuple[str, ...] | None = None
     test_glob: str = "test_*.py"
 
@@ -41,6 +43,7 @@ class DaCodeConfig:
             executor=os.environ.get("DACODE_EXECUTOR", "pi"),
             budget=int(os.environ.get("DACODE_BUDGET", "2")),
             variants_per_round=int(os.environ.get("DACODE_VARIANTS", "2")),
+            judge=os.environ.get("DACODE_JUDGE") or None,
             test_command=_env_test_command(),
             test_glob=os.environ.get("DACODE_TEST_GLOB", "test_*.py"),
         )
