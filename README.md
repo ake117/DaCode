@@ -82,6 +82,7 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 
 # search vault memory
 .venv/bin/dacode memory search "harness2 propose probe compose"
+.venv/bin/dacode memory search "how do I isolate agent worktrees"   # semantic blend
 
 # score Jev's Compose picks against recorded gate-verified winners
 .venv/bin/dacode judge-eval --limit 10
@@ -111,7 +112,8 @@ Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_LLM`,
 `DACODE_JUDGE`, `DACODE_ESCALATE_MODELS`, `DACODE_RUNLOG` (`off` disables
 the recorder; default `~/.local/state/dacode/runlog.jsonl`),
 `DACODE_MEMORY_DB` (`off` disables the state store; default
-`~/.local/state/dacode/memory.db`).
+`~/.local/state/dacode/memory.db`), `DACODE_SEMANTIC` (`auto` = on when
+Hermes' embedding index is installed, `on`, `off`).
 
 ### AI providers
 
@@ -199,7 +201,7 @@ Built to the pstack rules:
 - [x] Judge triage after a failed round — retry / new proposal / escalate model / human review
 - [x] Run recorder (`dacode/runlog.py`) + `dacode judge-eval` — Jev agreement with the critic gate
 - [x] SQLite local state store (`memory.db`) + FTS5 trigram search — `dacode state`
-- [ ] Semantic embedding retrieval for the vault layer
+- [x] Semantic embedding retrieval — blends Hermes' Gemini/ChromaDB index (60/40)
 - [ ] Parallel probing of variants (multiple worktrees at once)
 - [ ] Container/bwrap isolation on top of the worktree
 - [ ] `dacode retro` — suggest harness improvements after a run (pstack #5)

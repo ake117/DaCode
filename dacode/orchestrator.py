@@ -56,7 +56,7 @@ class DaCodeRig:
         )
         self.memory = memory
         if self.memory is None and config.vault is not None and Path(config.vault).is_dir():
-            self.memory = VaultMemory(config.vault)
+            self.memory = VaultMemory(config.vault, semantic=config.semantic)
         self.optimizer = HarnessOptimizer(
             llm=self.llm,
             sandbox=self.sandbox,

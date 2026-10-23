@@ -9,18 +9,23 @@ Two jobs, straight from the blueprint's workflow lifecycle:
   back as a note so the rig is smarter next time.
 
 Retrieval is keyword/TF scoring over markdown notes — dependency-free and
-deterministic.  A semantic backend can be layered on later by implementing the
-same interface (see ``score_note`` hook).
+deterministic. When the Hermes semantic index is installed, embedding hits
+(``dacode.memory.semantic``) are blended into the ranking; any failure in that
+backend silently degrades to keywords.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-__all__ = ["VaultMemory", "MemoryHit", "Lesson"]
+from dacode.memory.semantic import SemanticHit, SemanticIndex
+
+__all__ = ["VaultMemory", "MemoryHit", "Lesson", "SemanticHit", "SemanticIndex"]
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]{3,}|[\u0E00-\u0E7F]{2,}")
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
@@ -62,11 +67,17 @@ class VaultMemory:
         include_globs: tuple[str, ...] = ("**/*.md",),
         exclude_dirs: tuple[str, ...] = (".obsidian", ".git", ".trash", "templates"),
         max_note_chars: int = 200_000,
+        semantic: bool | str = "auto",
+        semantic_index: SemanticIndex | None = None,
     ) -> None:
         self.vault = Path(vault_path).expanduser().resolve()
         self.include_globs = include_globs
         self.exclude_dirs = {d.lower() for d in exclude_dirs}
         self.max_note_chars = max_note_chars
+        self.semantic_mode = semantic
+        self._semantic_index = semantic_index
+        self._semantic_checked = semantic_index is not None
+        self._semantic_failed = False
 
     # -- reading -----------------------------------------------------------
 
@@ -111,8 +122,95 @@ class VaultMemory:
                 score += 3.0 * title_hits + 1.0 * body_hits
         return score
 
+    def _semantic(self) -> SemanticIndex | None:
+        """Lazy-resolve the semantic backend once; ``None`` means off.
+
+        ``DACODE_SEMANTIC=off`` is a global kill switch (used by tests) and
+        wins over the instance setting.
+        """
+        mode = str(self.semantic_mode).lower()
+        env_mode = (os.environ.get("DACODE_SEMANTIC") or "").lower()
+        if mode in {"off", "false", "0", "no"} or env_mode in {"off", "false", "0", "no"}:
+            return None
+        if self._semantic_checked:
+            return self._semantic_index
+        self._semantic_checked = True
+        index = SemanticIndex()
+        self._semantic_index = index if index.available() else None
+        return self._semantic_index
+
+    def _semantic_hits(self, query: str, limit: int) -> list[SemanticHit]:
+        """Semantic hits for ``query``; a failure disables the backend for good."""
+        index = self._semantic()
+        if index is None or self._semantic_failed:
+            return []
+        try:
+            return index.search(query, top=max(limit * 2, 8))
+        except Exception as exc:  # noqa: BLE001 - retrieval must never break a run
+            self._semantic_failed = True
+            print(f"[memory] semantic retrieval disabled: {exc}", file=sys.stderr)
+            return []
+
+    def _tags_of(self, path: Path) -> tuple[str, ...]:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            return ()
+        meta, _ = self._split_frontmatter(text)
+        return tuple(
+            t.strip() for t in str(meta.get("tags", "")).replace(",", " ").split() if t.strip()
+        )
+
+    def _blend(
+        self,
+        keyword_hits: list[MemoryHit],
+        semantic_hits: list[SemanticHit],
+        limit: int,
+    ) -> list[MemoryHit]:
+        """Merge both rankings: 60% embedding similarity + 40% normalized TF."""
+        top_kw = max((hit.score for hit in keyword_hits), default=0.0) or 1.0
+        merged: dict[Path, MemoryHit] = {}
+        for hit in keyword_hits:
+            merged[hit.path.resolve()] = MemoryHit(
+                path=hit.path,
+                title=hit.title,
+                score=round(0.4 * hit.score / top_kw, 3),
+                snippet=hit.snippet,
+                tags=hit.tags,
+            )
+        for sem in semantic_hits:
+            target = (self.vault / sem.rel_path)
+            key = target.resolve()
+            base = merged.get(key)
+            if base is None:
+                if not key.is_file():
+                    continue
+                base = MemoryHit(
+                    path=key,
+                    title=sem.title or key.stem,
+                    score=0.0,
+                    snippet=sem.excerpt or "",
+                    tags=self._tags_of(key),
+                )
+            similarity = max(0.0, min(1.0, sem.similarity))
+            merged[key] = MemoryHit(
+                path=base.path,
+                title=base.title,
+                score=round(base.score + 0.6 * similarity, 3),
+                snippet=base.snippet or sem.excerpt,
+                tags=base.tags,
+            )
+        ranked = sorted(merged.values(), key=lambda hit: (-hit.score, str(hit.path)))
+        return ranked[:limit]
+
     def retrieve(self, query: str, limit: int = 5, *, min_score: float = 0.5) -> list[MemoryHit]:
-        """Return the ``limit`` best notes for ``query``, best first."""
+        """Return the ``limit`` best notes for ``query``, best first.
+
+        Keyword/TF scoring always runs. When the Hermes semantic index is
+        reachable, embedding hits are blended in (60% similarity + 40%
+        normalized keyword score); a semantic failure silently degrades to the
+        keyword ranking.
+        """
         if not query or not query.strip():
             return []
         tokens = self._tokenize(query)
@@ -141,7 +239,10 @@ class VaultMemory:
                     )
                 )
         hits.sort(key=lambda h: (-h.score, str(h.path)))
-        return hits[:limit]
+        semantic_hits = self._semantic_hits(query, limit)
+        if not semantic_hits:
+            return hits[:limit]
+        return self._blend(hits, semantic_hits, limit)
 
     @staticmethod
     def _snippet(tokens: list[str], body: str, width: int = 200) -> str:

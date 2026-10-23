@@ -76,3 +76,4 @@ def _quiet_runlog(monkeypatch, tmp_path):
     """Keep tests out of the real run log and state store."""
     monkeypatch.setenv("DACODE_RUNLOG", "off")
     monkeypatch.setenv("DACODE_MEMORY_DB", str(tmp_path / "memory.db"))
+    monkeypatch.setenv("DACODE_SEMANTIC", "off")

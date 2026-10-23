@@ -77,6 +77,14 @@ def build_parser() -> argparse.ArgumentParser:
     search = mem_sub.add_parser("search", help="retrieve relevant lessons for a query")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=5)
+    search.add_argument(
+        "--semantic", dest="semantic", action="store_true", default=None,
+        help="force the semantic (embedding) backend on",
+    )
+    search.add_argument(
+        "--no-semantic", dest="semantic", action="store_false",
+        help="keyword-only retrieval",
+    )
 
     sand = sub.add_parser("sandbox", help="inspect or clean trial worktrees")
     sand_sub = sand.add_subparsers(dest="sand_command", required=True)
@@ -205,7 +213,10 @@ def main(argv: list[str] | None = None) -> int:
         if cfg.vault is None or not Path(cfg.vault).is_dir():
             print(f"error: vault not found ({cfg.vault}); pass --vault", file=sys.stderr)
             return 2
-        mem = VaultMemory(cfg.vault)
+        mode = args.semantic if args.semantic is not None else cfg.semantic
+        mem = VaultMemory(cfg.vault, semantic=mode)
+        backend = "semantic+keyword" if mem._semantic() is not None else "keyword only"
+        print(f"# retrieval: {backend}")
         hits = mem.retrieve(args.query, limit=args.limit)
         if not hits:
             print("no matching notes")

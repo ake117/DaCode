@@ -27,6 +27,7 @@ class DaCodeConfig:
     variants_per_round: int = 2
     keep_winning_worktree: bool = False
 
+    semantic: str = "auto"  # vault retrieval backend: "auto" | "on" | "off"
     judge: str | None = None  # None = off; "jev" = TypeSafe System One judge
     escalate_models: list[str] | None = None  # ladder for the judge's escalate_model triage
 
@@ -44,6 +45,7 @@ class DaCodeConfig:
             executor=os.environ.get("DACODE_EXECUTOR", "pi"),
             budget=int(os.environ.get("DACODE_BUDGET", "2")),
             variants_per_round=int(os.environ.get("DACODE_VARIANTS", "2")),
+            semantic=os.environ.get("DACODE_SEMANTIC", "auto"),
             judge=os.environ.get("DACODE_JUDGE") or None,
             escalate_models=_env_model_ladder(),
             test_command=_env_test_command(),
