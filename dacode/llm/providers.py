@@ -4,11 +4,12 @@ Every provider here is OpenAI-compatible (``/chat/completions``), so one
 client class serves them all — including Anthropic, whose official
 compatibility layer speaks the same shape. Adding a provider is one
 registry entry: ``base_url``, the env var that holds its key, a default
-model, and optionally the provider name inside Pi's auth store.
+model.
 
 Keys resolve in this order: explicit ``api_key`` → the provider's env var
-(``cli.load_env`` merges the repo's ``.env`` and the Hermes dotenv first)
-→ Pi's auth store (``~/.pi/agent/auth.json``) when the preset names one.
+(``cli.load_env`` loads the target repo's ``.env``). DaCode deliberately
+does not read Pi's auth store (``~/.pi/agent/auth.json``) or the Hermes
+dotenv (``~/.hermes/.env``) — a standing instruction from 2026-10-20.
 """
 
 from __future__ import annotations
@@ -20,13 +21,11 @@ PROVIDERS: dict[str, dict] = {
         "base_url": "https://openrouter.ai/api/v1",
         "env": "OPENROUTER_API_KEY",
         "default_model": "deepseek/deepseek-v4.1-flash",
-        "pi": "openrouter",
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
         "env": "OPENAI_API_KEY",
         "default_model": "gpt-4o-mini",
-        "pi": "openai",
     },
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",

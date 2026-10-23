@@ -4,7 +4,9 @@ DaCode resolves secrets from, in priority order:
 
 1. the real process environment
 2. ``<repo>/.env``                 — per-project overrides
-3. ``~/.hermes/.env``              — the canonical dotenv on this machine
+
+The Hermes dotenv (``~/.hermes/.env``) is deliberately NOT read: secrets
+stay with the project they belong to (standing instruction, 2026-10-20).
 
 Values already present in the environment always win, so exporting a variable
 for one command still overrides the files.
@@ -17,7 +19,7 @@ from pathlib import Path
 
 __all__ = ["parse_env_file", "load_env", "DEFAULT_ENV_PATHS"]
 
-DEFAULT_ENV_PATHS: tuple[str, ...] = ("{repo}/.env", "~/.hermes/.env")
+DEFAULT_ENV_PATHS: tuple[str, ...] = ("{repo}/.env",)
 
 
 def parse_env_file(path: str | Path) -> dict[str, str]:

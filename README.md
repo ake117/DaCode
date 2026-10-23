@@ -119,10 +119,12 @@ the recorder; default `~/.local/state/dacode/runlog.jsonl`).
 | `mistral` | `MISTRAL_API_KEY` | `mistral-small-latest` |
 | `xai` | `XAI_API_KEY` | `grok-4` |
 
-Keys resolve in order: the provider's env var (the repo `.env` and the Hermes
-dotenv are merged automatically) → Pi's auth store for `openrouter` and
-`openai`. Every provider speaks the OpenAI-compatible shape, so adding one is
-a single entry in `dacode/llm/providers.py`.
+Keys resolve in order: an explicit `--api-key` / `api_key=` kwarg → the
+provider's env var, populated from the **target repo's** `.env` by
+`cli.load_env`. DaCode deliberately never reads `~/.hermes/.env` or Pi's auth
+store (`~/.pi/agent/auth.json`) — secrets stay with the project they belong
+to. Every provider speaks the OpenAI-compatible shape, so adding one is a
+single entry in `dacode/llm/providers.py`.
 
 ---
 

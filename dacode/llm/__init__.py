@@ -29,31 +29,6 @@ __all__ = [
 ]
 
 
-def _pi_auth_key(provider: str) -> str | None:
-    """Fall back to the Pi coding agent's auth store (~/.pi/agent/auth.json).
-
-    On this machine the OpenRouter key lives in Pi's auth file rather than the
-    environment, so DaCode reuses it instead of demanding a duplicate secret.
-    """
-    import json
-    import os
-
-    path = os.path.expanduser("~/.pi/agent/auth.json")
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    entry = data.get(provider)
-    if isinstance(entry, dict):
-        key = entry.get("key") or entry.get("apiKey")
-        if isinstance(key, str) and key.strip():
-            return key.strip()
-    if isinstance(entry, str) and entry.strip():
-        return entry.strip()
-    return None
-
-
 def build_llm(kind: str, **kwargs) -> LLMClient:
     """Factory used by the CLI / config layer.
 
@@ -77,11 +52,7 @@ def build_llm(kind: str, **kwargs) -> LLMClient:
 
     import os
 
-    key = (
-        kwargs.get("api_key")
-        or os.environ.get(preset["env"])
-        or (_pi_auth_key(preset["pi"]) if preset.get("pi") else None)
-    )
+    key = kwargs.get("api_key") or os.environ.get(preset["env"])
     return OpenAICompatClient(
         base_url=kwargs.get("base_url") or preset["base_url"],
         model=kwargs.get("model") or preset["default_model"],

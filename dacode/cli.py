@@ -158,10 +158,10 @@ def _print_result(result: HarnessResult) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    # Load secrets from .env files before building the rig:
-    # the target repo's own .env first, then the canonical ~/.hermes/.env.
+    # Load secrets from the target repo's own .env before building the rig.
+    # DaCode never reads ~/.hermes/.env or ~/.pi/agent/auth.json.
     repo_hint = Path(args.repo).expanduser() if getattr(args, "repo", None) else Path.cwd()
-    load_env(repo_hint / ".env", *[p.replace("{repo}", str(repo_hint)) for p in DEFAULT_ENV_PATHS])
+    load_env(*[p.replace("{repo}", str(repo_hint)) for p in DEFAULT_ENV_PATHS])
 
     if args.command == "judge-eval":
         from dacode.jeval import collect_cases, evaluate, summarize
