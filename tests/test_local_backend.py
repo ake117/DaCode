@@ -175,6 +175,37 @@ def test_embedder_parses_openai_shape_and_batches():
     assert [len(call["input"]) for call in calls] == [2, 1]
 
 
+def test_embedder_sends_dimensions_when_configured(monkeypatch):
+    monkeypatch.delenv("DACODE_EMBED_DIMS", raising=False)
+    seen = []
+
+    def transport(payload):
+        seen.append(dict(payload))
+        return {"data": [{"embedding": [0.1] * payload.get("dimensions", 3)} for _ in payload["input"]]}
+
+    Embedder(base_url="http://x/v1", model="m", transport=transport).embed(["a"])
+    assert "dimensions" not in seen[-1]
+
+    Embedder(base_url="http://x/v1", model="m", dims=768, transport=transport).embed(["a"])
+    assert seen[-1]["dimensions"] == 768
+
+
+def test_embedder_reads_dims_from_env(monkeypatch):
+    monkeypatch.setenv("DACODE_EMBED_DIMS", "1536")
+    assert Embedder(base_url="http://x/v1", model="m").dims == 1536
+
+
+def test_embedder_fails_when_provider_ignores_dimensions():
+    short = Embedder(
+        base_url="http://x/v1",
+        model="m",
+        dims=768,
+        transport=lambda payload: {"data": [{"embedding": [0.1] * 3072}]},
+    )
+    with pytest.raises(EmbedError, match="ignored dimensions"):
+        short.embed(["a"])
+
+
 def test_embedder_rejects_unconfigured_and_bad_shapes():
     with pytest.raises(EmbedError, match="configured"):
         Embedder(base_url="", model="").embed(["x"])

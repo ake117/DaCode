@@ -117,7 +117,8 @@ the recorder; default `~/.local/state/dacode/runlog.jsonl`),
 `~/.local/state/dacode/memory.db`), `DACODE_SEMANTIC_BACKEND` (`auto` by
 default — see "Memory backends"), `DACODE_EMBED_BASE_URL`, `DACODE_EMBED_MODEL`,
 `DACODE_EMBED_API_KEY`, `DACODE_EMBED_BATCH`, `DACODE_EMBED_TIMEOUT`,
-`DACODE_EMBED_DB`, and `DACODE_SEMANTIC=off` as the global kill switch.
+`DACODE_EMBED_DIMS` (request a specific vector length), `DACODE_EMBED_DB`, and
+`DACODE_SEMANTIC=off` as the global kill switch.
 
 ### AI providers
 
@@ -166,6 +167,20 @@ export DACODE_EMBED_MODEL=bge-m3
 embedding model requires `--rebuild`, because the store refuses to mix models
 (two models in one index produce plausible-looking garbage). Without an
 embedder configured nothing breaks — retrieval is simply keyword-only.
+
+Recipes (any OpenAI-compatible ``/v1/embeddings`` works):
+
+| Endpoint | `DACODE_EMBED_BASE_URL` | `DACODE_EMBED_MODEL` | `DACODE_EMBED_DIMS` |
+|---|---|---|---|
+| Ollama (local, free) | `http://127.0.0.1:11434/v1` | `bge-m3` | leave unset |
+| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-embedding-2` | `768` (default is 3072) |
+| OpenAI | `https://api.openai.com/v1` | `text-embedding-3-small` | `1536` (optional) |
+
+Keys come from `DACODE_EMBED_API_KEY`, falling back to `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, then `GOOGLE_API_KEY` — loaded from the target repo's `.env`
+like every other secret. Gemini's OpenAI-compatible endpoint batches correctly
+(`input: [a, b, c]` → three vectors) and honours `dimensions`, so a 583-note
+vault indexes in one pass.
 
 ### Plugging in another agent's memory
 
