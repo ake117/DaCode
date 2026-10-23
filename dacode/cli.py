@@ -59,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--keep-worktree", action="store_true", help="keep losing trial worktrees")
     run.add_argument(
+        "--escalate-models",
+        default=None,
+        help="comma-separated model ladder for the judge's escalate_model "
+        "triage action (e.g. 'claude-sonnet-4-5,gpt-4o')",
+    )
+    run.add_argument(
         "--judge",
         default=None,
         help="bounded-decision judge for compose: 'jev' = TypeSafe System One "
@@ -108,6 +114,8 @@ def _make_config(args) -> DaCodeConfig:
         cfg.keep_winning_worktree = True
     if getattr(args, "judge", None):
         cfg.judge = args.judge
+    if getattr(args, "escalate_models", None):
+        cfg.escalate_models = [m.strip() for m in args.escalate_models.split(",") if m.strip()]
     return cfg
 
 
@@ -127,6 +135,8 @@ def _print_result(result: HarnessResult) -> None:
         print(f"  workspace : {p.workspace}")
     if result.lesson_path:
         print(f"  lesson    : {result.lesson_path}")
+    if result.needs_human_review:
+        print("  note      : needs human review — the judge stopped the run")
     print("=" * 62)
     for v in sorted(result.variants, key=lambda x: x.score or 0, reverse=True):
         mark = "★" if v is best else " "

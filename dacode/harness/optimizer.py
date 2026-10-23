@@ -67,6 +67,7 @@ class HarnessOptimizer:
         variants_per_round: int = 2,
         base_prompt: str = DEFAULT_SYSTEM_PROMPT,
         keep_winning_worktree: bool = False,
+        escalation_models: list[str] | None = None,
     ) -> None:
         self.llm = llm
         self.sandbox = sandbox
@@ -78,6 +79,7 @@ class HarnessOptimizer:
         self.variants_per_round = max(1, variants_per_round)
         self.base_prompt = base_prompt
         self.keep_winning_worktree = keep_winning_worktree
+        self.escalation_models = list(escalation_models or [])
 
     # -- propose -----------------------------------------------------------
 
@@ -217,23 +219,42 @@ class HarnessOptimizer:
     # -- full loop ---------------------------------------------------------
 
     def run(self, task: str, base: HarnessVariant | None = None) -> HarnessResult:
-        """Execute the Propose–Probe–Compose loop for ``task``."""
+        """Execute the Propose–Probe–Compose loop for ``task``.
+
+        With a judge attached, every round that fails the gate asks it for the
+        next action — ``retry_same`` (re-probe unchanged), ``new_proposal``
+        (fresh variants), ``escalate_model`` (switch the executor up the
+        ladder), or ``human_review`` (stop and flag). Without a judge the
+        loop simply runs out its budget, exactly as before.
+        """
         if base is None:
             base = HarnessVariant(system_prompt=self.base_prompt, label="base")
 
         all_variants: list[HarnessVariant] = []
+        seen: set[str] = set()
         best = base
         best.score = 0.0
         rounds_run = 0
+        needs_human_review = False
+        ladder = list(self.escalation_models)
 
-        for round_no in range(1, self.budget + 1):
+        reprobe: list[HarnessVariant] | None = None
+        round_no = 0
+        while round_no < self.budget:
+            round_no += 1
             rounds_run = round_no
-            variants = self.propose(task, best, self.variants_per_round)
+            if reprobe is not None:
+                variants = reprobe  # triage said: re-probe these unchanged
+                reprobe = None
+            else:
+                variants = self.propose(task, best, self.variants_per_round)
             for idx, variant in enumerate(variants, start=1):
                 trial_id = f"{_slug(task)}-r{round_no}-{idx}-{variant.id}"
                 variant.payload.setdefault("task", task)
                 self.probe(variant, task, trial_id)
-                all_variants.append(variant)
+                if variant.id not in seen:
+                    seen.add(variant.id)
+                    all_variants.append(variant)
             round_best = self.compose(task, variants)
             if (round_best.score or 0.0) >= (best.score or 0.0):
                 best = round_best
@@ -241,6 +262,21 @@ class HarnessOptimizer:
             self._cleanup_losers(variants, keep=best)
             if best.score is not None and best.score >= 1.0 and best.probe and best.probe.critique_passed:
                 break
+            if round_no >= self.budget:
+                break  # no budget left to act on a triage decision
+
+            action = "new_proposal"
+            if self.judge is not None:
+                action = self._triage(task, round_no, best, variants, can_escalate=bool(ladder))
+            if action == "human_review":
+                needs_human_review = True
+                break
+            if action == "escalate_model" and ladder:
+                model = ladder.pop(0)
+                if hasattr(self.executor, "model"):
+                    self.executor.model = model
+            if action == "retry_same":
+                reprobe = list(variants)
 
         return HarnessResult(
             task=task,
@@ -248,7 +284,70 @@ class HarnessOptimizer:
             best=best,
             variants=all_variants,
             passed=bool(best.probe and best.probe.critique_passed),
+            needs_human_review=needs_human_review,
         )
+
+    def _triage(
+        self,
+        task: str,
+        round_no: int,
+        best: HarnessVariant,
+        variants: list[HarnessVariant],
+        *,
+        can_escalate: bool,
+    ) -> str:
+        """Ask the judge for the next action after a failed round.
+
+        Returns one of ``new_proposal`` / ``retry_same`` / ``escalate_model``
+        / ``human_review``. Any failure or unconfident answer defaults to
+        ``new_proposal`` — the loop's previous behaviour.
+        """
+        table = "\n".join(
+            f"- id={v.id} label={v.label!r} score={v.score} "
+            f"tests={v.probe.tests_passed if v.probe else '?'}/"
+            f"{v.probe.tests_total if v.probe else '?'} "
+            f"passed={v.probe.critique_passed if v.probe else '?'}"
+            for v in variants
+        )
+        criteria = {
+            "new_proposal": "Propose fresh harness variants and probe them — the normal next round.",
+            "retry_same": (
+                "Re-probe this round's variants unchanged — only for transient "
+                "failures (network, rate limits), not for bad code."
+            ),
+            "human_review": (
+                "Stop and hand the task to a human — the current approach is "
+                "unlikely to succeed."
+            ),
+        }
+        if can_escalate:
+            criteria["escalate_model"] = (
+                "Switch the executor to a stronger model, then propose again."
+            )
+        probe = best.probe
+        state = (
+            f"Task:\n{task}\n\n"
+            f"Round {round_no} of {self.budget} finished; no variant passed the gate.\n"
+            f"Best so far: id={best.id} label={best.label!r} score={best.score} "
+            f"tests={probe.tests_passed if probe else '?'}/"
+            f"{probe.tests_total if probe else '?'} "
+            f"critique_passed={probe.critique_passed if probe else '?'}\n\n"
+            f"This round's variants:\n{table}\n"
+        )
+        try:
+            action, _confidence = self.judge.choice(
+                state=state,
+                instructions=(
+                    "The gate did not pass this round. Choose the single next "
+                    "action for the rig. Answer with exactly one action id."
+                ),
+                criteria=criteria,
+                min_confidence=0.5,
+            )
+        except Exception as exc:  # noqa: BLE001 - a judge failure must not kill the run
+            print(f"[judge] triage failed: {exc}", file=sys.stderr)
+            return "new_proposal"
+        return action or "new_proposal"
 
     def _cleanup_losers(self, variants: list[HarnessVariant], *, keep: HarnessVariant) -> None:
         if self.keep_winning_worktree:

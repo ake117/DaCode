@@ -70,6 +70,7 @@ class HarnessResult:
     variants: list[HarnessVariant] = field(default_factory=list)
     passed: bool = False
     lesson_path: str | None = None
+    needs_human_review: bool = False
 
     @property
     def best_score(self) -> float:

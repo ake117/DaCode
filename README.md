@@ -96,10 +96,11 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 | `--model` | any model id | `deepseek/deepseek-v4.1-flash` |
 | `--executor` | `pi` \| `script` | `pi` |
 | `--judge` | `jev` (unset = off) | off |
+| `--escalate-models` | comma-separated model ladder, e.g. `claude-sonnet-4-5,gpt-4o` | none |
 
 Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_LLM`,
 `DACODE_MODEL`, `DACODE_EXECUTOR`, `DACODE_BUDGET`, `DACODE_VARIANTS`,
-`DACODE_JUDGE`.
+`DACODE_JUDGE`, `DACODE_ESCALATE_MODELS`.
 
 ### AI providers
 
@@ -135,7 +136,10 @@ a single entry in `dacode/llm/providers.py`.
 3. **Compose** — the best variant is selected (an optional Jev System One
    judgment, then LLM-assisted, with a deterministic fallback to the measured
    ranking). The judge only picks among variants the gate already scored —
-   the pass/fail verdict stays with the critic.
+   the pass/fail verdict stays with the critic. When the gate did not pass
+   and budget remains, the judge also **triages** the next action: retry the
+   same variants, propose fresh ones, escalate the executor up a model ladder
+   (`--escalate-models`), or stop and flag the task for human review.
 4. **Memory Ingestion** — if the winner passed, a `type: lesson` note is written
    into the vault under `Resources/DaCode/Lessons/`.
 
@@ -179,6 +183,7 @@ Built to the pstack rules:
 - [x] Layer 5 Git Sandbox (worktrees + checkpoints)
 - [x] CLI + end-to-end tests
 - [x] Jev (TypeSafe System One) judge for the Compose pick (`--judge jev`)
+- [x] Judge triage after a failed round — retry / new proposal / escalate model / human review
 - [ ] Semantic embedding retrieval for the vault layer
 - [ ] Parallel probing of variants (multiple worktrees at once)
 - [ ] Container/bwrap isolation on top of the worktree

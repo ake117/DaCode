@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import pytest
 
+from dacode.executor.base import ExecResult
 from dacode.harness.models import HarnessVariant, ProbeResult
+from dacode.discipline import PstackCritic
 from dacode.harness.optimizer import HarnessOptimizer
+from dacode.llm import StubLLM
+from dacode.sandbox import GitSandbox
 from dacode.judgment import JevJudge, SystemOneError, build_judge
 
 CRITERIA = {"v2": "score=1.0", "v3": "score=0.9"}
@@ -175,3 +179,129 @@ def test_compose_skips_the_judge_for_a_single_variant():
     result = _optimizer(judge).compose("task", [only])
     assert result is only
     assert judge.calls == []  # nothing to decide — the judge is never asked
+
+
+# --- run() triage: the judge steers the loop after a failed round -----------
+
+import json as _json
+from pathlib import Path as _Path
+
+PROPOSE_JSON = _json.dumps(
+    [
+        {"label": "good", "system_prompt": "implement carefully", "tools": []},
+        {"label": "bad", "system_prompt": "do nothing", "tools": []},
+    ]
+)
+
+
+class _CalcExecutor:
+    """Writes calc.py only for `good_label`; records runs; model is switchable."""
+
+    model = "weak-start"
+
+    def __init__(self, good_label: str = "never") -> None:
+        self.good_label = good_label
+        self.seen: list[str] = []
+
+    def run(self, variant: HarnessVariant, workspace: str) -> ExecResult:
+        self.seen.append(variant.label)
+        if variant.label == self.good_label:
+            (_Path(workspace) / "calc.py").write_text(
+                "def add(a, b):\n    return a + b\n", encoding="utf-8"
+            )
+            return ExecResult(exit_code=0, stdout="wrote calc.py")
+        return ExecResult(exit_code=0, stdout="no-op")
+
+
+class _TriageJudge:
+    """compose questions → (None, 0.0); triage questions → the scripted action."""
+
+    def __init__(self, action=None, confidence=0.9, error=None):
+        self.action = action
+        self.confidence = confidence
+        self.error = error
+        self.triage_calls = []
+
+    def choice(self, *, state, instructions, criteria, min_confidence=0.5):
+        if "new_proposal" in criteria:  # the triage question
+            self.triage_calls.append({"state": state, "criteria": dict(criteria)})
+            if self.error is not None:
+                raise self.error
+            if self.action is None:
+                return None, self.confidence
+            return self.action, self.confidence
+        return None, 0.0  # the compose question → deterministic ranking
+
+
+def _run_optimizer(rig_repo, executor, judge, budget=2, escalate=None):
+    llm = StubLLM(responses={"Propose 2 variants": PROPOSE_JSON}, default="")
+    return HarnessOptimizer(
+        llm=llm,
+        sandbox=GitSandbox(rig_repo),
+        executor=executor,
+        critic=PstackCritic(),
+        judge=judge,
+        budget=budget,
+        variants_per_round=2,
+        escalation_models=[escalate] if escalate else None,
+    )
+
+
+def test_run_human_review_stops_before_budget(rig_repo):
+    judge = _TriageJudge(action="human_review")
+    executor = _CalcExecutor()
+    opt = _run_optimizer(rig_repo, executor, judge, budget=3, escalate="m1")
+    result = opt.run("implement calc.add")
+    assert result.rounds == 1  # stopped with budget to spare
+    assert result.needs_human_review is True
+    assert result.passed is False
+    assert result.lesson_path is None
+    assert len(executor.seen) == 2  # only round 1's two probes
+    assert set(judge.triage_calls[0]["criteria"]) == {
+        "new_proposal",
+        "retry_same",
+        "escalate_model",
+        "human_review",
+    }
+    assert "Round 1 of 3" in judge.triage_calls[0]["state"]
+    assert "implement calc.add" in judge.triage_calls[0]["state"]
+
+
+def test_run_retry_same_reprobes_the_same_variants(rig_repo):
+    judge = _TriageJudge(action="retry_same")
+    executor = _CalcExecutor()
+    opt = _run_optimizer(rig_repo, executor, judge, budget=2)
+    result = opt.run("implement calc.add")
+    assert result.rounds == 2
+    assert result.passed is False
+    assert executor.seen == ["good", "bad", "good", "bad"]  # same variants twice
+    assert len(result.variants) == 2  # retries are not double-counted
+
+
+def test_run_escalate_model_switches_the_executor(rig_repo):
+    judge = _TriageJudge(action="escalate_model")
+    executor = _CalcExecutor()
+    opt = _run_optimizer(rig_repo, executor, judge, budget=2, escalate="claude-sonnet-4-5")
+    result = opt.run("implement calc.add")
+    assert result.rounds == 2
+    assert executor.model == "claude-sonnet-4-5"
+    assert "escalate_model" in judge.triage_calls[0]["criteria"]
+
+
+def test_run_triage_failure_defaults_to_new_proposal(rig_repo):
+    judge = _TriageJudge(error=SystemOneError("HTTP 503"))
+    executor = _CalcExecutor()
+    opt = _run_optimizer(rig_repo, executor, judge, budget=2)
+    result = opt.run("implement calc.add")
+    assert result.rounds == 2
+    assert result.needs_human_review is False
+    assert len(executor.seen) == 4  # round 2 proposed fresh variants (2 + 2)
+    assert len(result.variants) == 4
+
+
+def test_run_without_judge_never_flags_human_review(rig_repo):
+    executor = _CalcExecutor()
+    opt = _run_optimizer(rig_repo, executor, judge=None, budget=2)
+    result = opt.run("implement calc.add")
+    assert result.rounds == 2
+    assert result.needs_human_review is False

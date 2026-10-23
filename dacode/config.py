@@ -28,6 +28,7 @@ class DaCodeConfig:
     keep_winning_worktree: bool = False
 
     judge: str | None = None  # None = off; "jev" = TypeSafe System One judge
+    escalate_models: list[str] | None = None  # ladder for the judge's escalate_model triage
 
     test_command: tuple[str, ...] | None = None
     test_glob: str = "test_*.py"
@@ -44,9 +45,19 @@ class DaCodeConfig:
             budget=int(os.environ.get("DACODE_BUDGET", "2")),
             variants_per_round=int(os.environ.get("DACODE_VARIANTS", "2")),
             judge=os.environ.get("DACODE_JUDGE") or None,
+            escalate_models=_env_model_ladder(),
             test_command=_env_test_command(),
             test_glob=os.environ.get("DACODE_TEST_GLOB", "test_*.py"),
         )
+
+
+def _env_model_ladder() -> list[str] | None:
+    """Read ``DACODE_ESCALATE_MODELS`` as a comma-separated model ladder."""
+    raw = os.environ.get("DACODE_ESCALATE_MODELS")
+    if not raw:
+        return None
+    models = [m.strip() for m in raw.split(",") if m.strip()]
+    return models or None
 
 
 def _env_test_command() -> tuple[str, ...] | None:

@@ -64,6 +64,7 @@ class DaCodeRig:
             critic=self.critic,
             memory=self.memory,
             judge=self.judge,
+            escalation_models=config.escalate_models,
             budget=config.budget,
             variants_per_round=config.variants_per_round,
             keep_winning_worktree=config.keep_winning_worktree,
