@@ -15,6 +15,8 @@ import sys
 import time
 from pathlib import Path
 
+from dacode import state
+
 __all__ = ["default_path", "record", "load_events"]
 
 
@@ -41,6 +43,7 @@ def record(event: dict) -> None:
         event = {"ts": time.time(), **event}
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        state.ingest(event)  # mirror into memory.db (queryable history)
     except OSError as exc:
         print(f"[runlog] record failed: {exc}", file=sys.stderr)
 

@@ -72,6 +72,7 @@ def vault(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _quiet_runlog(monkeypatch):
-    """Keep tests out of the real run log — eval data must come from real runs."""
+def _quiet_runlog(monkeypatch, tmp_path):
+    """Keep tests out of the real run log and state store."""
     monkeypatch.setenv("DACODE_RUNLOG", "off")
+    monkeypatch.setenv("DACODE_MEMORY_DB", str(tmp_path / "memory.db"))

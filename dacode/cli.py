@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from dacode.config import DaCodeConfig
@@ -93,6 +94,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="runlog path (default: DACODE_RUNLOG or ~/.local/state/dacode/runlog.jsonl)",
     )
+    st = sub.add_parser("state", help="query the local SQLite state store (memory.db)")
+    st_sub = st.add_subparsers(dest="state_command", required=True)
+    st_search = st_sub.add_parser("search", help="search recorded runs, variants, and picks")
+    st_search.add_argument("query")
+    st_search.add_argument("--limit", type=int, default=10)
+    st_sub.add_parser("stats", help="counts and freshness of the local store")
+    st_fail = st_sub.add_parser("failures", help="approaches that failed the gate")
+    st_fail.add_argument("--task", default=None, help="filter by task substring")
+    st_fail.add_argument("--limit", type=int, default=20)
+    st_sub.add_parser("rebuild", help="rebuild the DB from the JSONL run log")
     sub.add_parser("layers", help="show the status of the five layers")
     return parser
 
@@ -220,6 +231,44 @@ def main(argv: list[str] | None = None) -> int:
                     sandbox.remove(name, delete_branch=True)
                     removed += 1
             print(f"removed {removed} trial worktree(s)")
+            return 0
+
+    if args.command == "state":
+        from dacode import state
+
+        if args.state_command == "search":
+            hits = state.search(args.query, limit=args.limit)
+            if not hits:
+                print("no matching history")
+                return 1
+            for hit in hits:
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(hit["ts"]))
+                print(f"[{when}] {hit['kind']:<7} {hit['task'][:90]}")
+                if hit["label"] or hit["detail"]:
+                    print(f"           {hit['label']}  {hit['detail']}")
+            return 0
+        if args.state_command == "stats":
+            info = state.stats()
+            if not info.get("enabled"):
+                print("state store disabled (DACODE_MEMORY_DB=off)")
+                return 1
+            for key, value in info.items():
+                print(f"  {key:<15}: {value}")
+            return 0
+        if args.state_command == "failures":
+            rows = state.failures(args.task, limit=args.limit)
+            if not rows:
+                print("no failed approaches recorded")
+                return 1
+            for row in rows:
+                print(
+                    f"  {row['tests_passed']}/{row['tests_total']}  "
+                    f"{str(row['label']):<24} {row['task'][:80]}"
+                )
+            return 0
+        if args.state_command == "rebuild":
+            count = state.rebuild()
+            print(f"rebuilt from {count} runlog event(s)")
             return 0
 
     if args.command == "run":
