@@ -18,7 +18,8 @@ from dacode.config import DaCodeConfig
 from dacode.llm import provider_names
 from dacode.env import DEFAULT_ENV_PATHS, load_env
 from dacode.harness.models import HarnessResult
-from dacode.memory import VaultMemory
+from dacode.memory import VaultMemory, status
+from dacode.memory.backends.local import LocalStoreBackend
 from dacode.orchestrator import DaCodeRig
 from dacode.sandbox import GitSandbox
 
@@ -78,13 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=5)
     search.add_argument(
-        "--semantic", dest="semantic", action="store_true", default=None,
-        help="force the semantic (embedding) backend on",
+        "--backend",
+        default=None,
+        help="memory backend: auto (default) | local | hermes | off | module:factory",
     )
-    search.add_argument(
-        "--no-semantic", dest="semantic", action="store_false",
-        help="keyword-only retrieval",
-    )
+    mem_sub.add_parser("backends", help="show which memory backends are usable")
+    mem_index = mem_sub.add_parser("index", help="embed the vault into the local vector store")
+    mem_index.add_argument("--rebuild", action="store_true", help="re-embed every note")
 
     sand = sub.add_parser("sandbox", help="inspect or clean trial worktrees")
     sand_sub = sand.add_subparsers(dest="sand_command", required=True)
@@ -213,10 +214,32 @@ def main(argv: list[str] | None = None) -> int:
         if cfg.vault is None or not Path(cfg.vault).is_dir():
             print(f"error: vault not found ({cfg.vault}); pass --vault", file=sys.stderr)
             return 2
-        mode = args.semantic if args.semantic is not None else cfg.semantic
+        if args.mem_command == "backends":
+            for row in status(cfg.vault):
+                mark = "OK  " if row["available"] else "off "
+                print(f"  {mark} {row['name']:<8} {row['detail']}")
+            return 0
+        if args.mem_command == "index":
+            index = LocalStoreBackend(cfg.vault)
+            if not index.embedder.configured:
+                print(
+                    "error: no embedding endpoint configured — set DACODE_EMBED_BASE_URL "
+                    "and DACODE_EMBED_MODEL (see README 'Memory backends')",
+                    file=sys.stderr,
+                )
+                return 2
+            counts = index.store.index(cfg.vault, index.embedder, rebuild=args.rebuild)
+            print(
+                f"indexed: {counts['embedded']} embedded, {counts['skipped']} unchanged, "
+                f"{counts['pruned']} pruned → {counts['total']} vectors "
+                f"({counts['model']})"
+            )
+            return 0
+        mode = args.backend if args.backend is not None else cfg.semantic
         mem = VaultMemory(cfg.vault, semantic=mode)
-        backend = "semantic+keyword" if mem._semantic() is not None else "keyword only"
-        print(f"# retrieval: {backend}")
+        backend = mem._semantic()
+        label = f"{backend.name}+keyword" if backend is not None else "keyword only"
+        print(f"# retrieval: {label}")
         hits = mem.retrieve(args.query, limit=args.limit)
         if not hits:
             print("no matching notes")

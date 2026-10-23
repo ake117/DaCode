@@ -23,9 +23,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from dacode.memory.semantic import SemanticHit, SemanticIndex
+from dacode.memory.backends import SemanticHit, SemanticBackend, resolve, status
+from dacode.memory.backends.hermes import SemanticIndex
 
-__all__ = ["VaultMemory", "MemoryHit", "Lesson", "SemanticHit", "SemanticIndex"]
+__all__ = [
+    "VaultMemory",
+    "MemoryHit",
+    "Lesson",
+    "SemanticBackend",
+    "SemanticHit",
+    "SemanticIndex",
+    "resolve",
+    "status",
+]
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]{3,}|[\u0E00-\u0E7F]{2,}")
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
@@ -122,21 +132,35 @@ class VaultMemory:
                 score += 3.0 * title_hits + 1.0 * body_hits
         return score
 
-    def _semantic(self) -> SemanticIndex | None:
+    def _semantic(self) -> SemanticBackend | None:
         """Lazy-resolve the semantic backend once; ``None`` means off.
 
-        ``DACODE_SEMANTIC=off`` is a global kill switch (used by tests) and
-        wins over the instance setting.
+        The instance setting is a backend name (``auto`` / ``local`` /
+        ``hermes`` / ``module:factory`` / ``off``). ``DACODE_SEMANTIC_BACKEND``
+        overrides it globally, and ``DACODE_SEMANTIC=off`` stays the kill
+        switch that tests rely on.
         """
-        mode = str(self.semantic_mode).lower()
-        env_mode = (os.environ.get("DACODE_SEMANTIC") or "").lower()
-        if mode in {"off", "false", "0", "no"} or env_mode in {"off", "false", "0", "no"}:
+        if isinstance(self.semantic_mode, bool):
+            mode = "auto" if self.semantic_mode else "off"
+        else:
+            mode = str(self.semantic_mode).strip() or "auto"
+        env_mode = (
+            os.environ.get("DACODE_SEMANTIC_BACKEND")
+            or os.environ.get("DACODE_SEMANTIC")
+            or ""
+        ).strip()
+        if env_mode:
+            mode = env_mode
+        if mode.lower() in {"off", "false", "0", "no", "none"}:
             return None
         if self._semantic_checked:
             return self._semantic_index
         self._semantic_checked = True
-        index = SemanticIndex()
-        self._semantic_index = index if index.available() else None
+        try:
+            self._semantic_index = resolve(mode, self.vault)
+        except Exception as exc:  # noqa: BLE001 - misconfig must not break retrieval
+            print(f"[memory] backend {mode!r} unusable: {exc}", file=sys.stderr)
+            self._semantic_index = None
         return self._semantic_index
 
     def _semantic_hits(self, query: str, limit: int) -> list[SemanticHit]:
