@@ -92,7 +92,7 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 
 | Flag | Values | Default |
 |------|--------|---------|
-| `--llm` | `stub` \| `local` \| `openrouter` \| `openai` | `openrouter` |
+| `--llm` | `stub` \| `local` \| any provider preset (table below) | `openrouter` |
 | `--model` | any model id | `deepseek/deepseek-v4.1-flash` |
 | `--executor` | `pi` \| `script` | `pi` |
 | `--judge` | `jev` (unset = off) | off |
@@ -100,6 +100,24 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_LLM`,
 `DACODE_MODEL`, `DACODE_EXECUTOR`, `DACODE_BUDGET`, `DACODE_VARIANTS`,
 `DACODE_JUDGE`.
+
+### AI providers
+
+| `--llm` | Key env var | Default model |
+|---------|-------------|---------------|
+| `openrouter` | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4.1-flash` |
+| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` |
+| `gemini` | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| `mistral` | `MISTRAL_API_KEY` | `mistral-small-latest` |
+| `xai` | `XAI_API_KEY` | `grok-4` |
+
+Keys resolve in order: the provider's env var (the repo `.env` and the Hermes
+dotenv are merged automatically) → Pi's auth store for `openrouter` and
+`openai`. Every provider speaks the OpenAI-compatible shape, so adding one is
+a single entry in `dacode/llm/providers.py`.
 
 ---
 

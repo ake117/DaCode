@@ -4,8 +4,9 @@ Every backend implements the :class:`LLMClient` protocol — a single
 ``complete(system, user) -> str`` call.  This keeps the rig dependency-free
 (``urllib`` only) while working against any OpenAI-compatible endpoint:
 
-* local llama.cpp server   — ``http://127.0.0.1:18434/v1``
-* OpenRouter / OpenAI      — ``https://openrouter.ai/api/v1``
+* local llama.cpp server    — ``http://127.0.0.1:18434/v1``
+* popular providers         — see ``dacode/llm/providers.py``: OpenRouter,
+  OpenAI, Anthropic, Gemini, Groq, DeepSeek, Mistral, xAI
 * a deterministic stub      — for tests
 """
 
@@ -13,9 +14,19 @@ from __future__ import annotations
 
 from dacode.llm.base import LLMClient, LLMError
 from dacode.llm.openai_compat import OpenAICompatClient
+from dacode.llm.providers import PROVIDERS, get_provider, provider_names
 from dacode.llm.stub import StubLLM
 
-__all__ = ["LLMClient", "LLMError", "OpenAICompatClient", "StubLLM", "build_llm"]
+__all__ = [
+    "LLMClient",
+    "LLMError",
+    "OpenAICompatClient",
+    "PROVIDERS",
+    "StubLLM",
+    "build_llm",
+    "get_provider",
+    "provider_names",
+]
 
 
 def _pi_auth_key(provider: str) -> str | None:
@@ -46,7 +57,9 @@ def _pi_auth_key(provider: str) -> str | None:
 def build_llm(kind: str, **kwargs) -> LLMClient:
     """Factory used by the CLI / config layer.
 
-    kind: "stub" | "local" | "openrouter" | "openai"
+    kind: "stub" | "local" | any provider preset (openrouter, openai,
+    anthropic, gemini, groq, deepseek, mistral, xai — see
+    ``dacode/llm/providers.py``).
     """
     kind = (kind or "stub").lower()
     if kind == "stub":
@@ -58,22 +71,20 @@ def build_llm(kind: str, **kwargs) -> LLMClient:
             model=kwargs.get("model", "local"),
             api_key=kwargs.get("api_key"),
         )
-    if kind == "openrouter":
-        import os
+    preset = get_provider(kind)
+    if preset is None:
+        raise ValueError(f"unknown llm kind: {kind!r}")
 
-        key = kwargs.get("api_key") or os.environ.get("OPENROUTER_API_KEY") or _pi_auth_key("openrouter")
-        return OpenAICompatClient(
-            base_url="https://openrouter.ai/api/v1",
-            model=kwargs.get("model", "deepseek/deepseek-v4.1-flash"),
-            api_key=key,
-        )
-    if kind == "openai":
-        import os
+    import os
 
-        key = kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY") or _pi_auth_key("openai")
-        return OpenAICompatClient(
-            base_url="https://api.openai.com/v1",
-            model=kwargs.get("model", "gpt-4o-mini"),
-            api_key=key,
-        )
-    raise ValueError(f"unknown llm kind: {kind!r}")
+    key = (
+        kwargs.get("api_key")
+        or os.environ.get(preset["env"])
+        or (_pi_auth_key(preset["pi"]) if preset.get("pi") else None)
+    )
+    return OpenAICompatClient(
+        base_url=kwargs.get("base_url") or preset["base_url"],
+        model=kwargs.get("model") or preset["default_model"],
+        api_key=key,
+        extra_headers=preset.get("extra_headers"),
+    )

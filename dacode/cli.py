@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from dacode.config import DaCodeConfig
+from dacode.llm import provider_names
 from dacode.env import DEFAULT_ENV_PATHS, load_env
 from dacode.harness.models import HarnessResult
 from dacode.memory import VaultMemory
@@ -37,7 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("task", help="the engineering task, in plain language")
     run.add_argument("--budget", type=int, default=2, help="Harness² recursion rounds")
     run.add_argument("--variants", type=int, default=2, help="variants proposed per round")
-    run.add_argument("--llm", default=None, help="stub | local | openrouter | openai")
+    run.add_argument(
+        "--llm",
+        default=None,
+        help="stub | local | " + " | ".join(provider_names()),
+    )
     run.add_argument("--model", default=None, help="model id for the chosen backend")
     run.add_argument("--executor", default=None, choices=["pi", "script"])
     run.add_argument("--script-command", default=None, help="command for --executor script")
