@@ -78,5 +78,7 @@ def _quiet_runlog(monkeypatch, tmp_path):
     monkeypatch.setenv("DACODE_MEMORY_DB", str(tmp_path / "memory.db"))
     monkeypatch.setenv("DACODE_SEMANTIC", "off")
     monkeypatch.setenv("DACODE_EMBED_DB", str(tmp_path / "embeddings.db"))
-    monkeypatch.delenv("DACODE_EMBED_BASE_URL", raising=False)
-    monkeypatch.delenv("DACODE_EMBED_MODEL", raising=False)
+    for var in ("DACODE_EMBED_BASE_URL", "DACODE_EMBED_MODEL", "DACODE_EMBED_DIMS",
+                "DACODE_EMBED_BATCH", "DACODE_EMBED_API_KEY"):
+        # a developer's exported embedder config must not leak into the suite
+        monkeypatch.delenv(var, raising=False)
