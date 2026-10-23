@@ -82,6 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
     sand_sub.add_parser("list", help="list registered worktrees")
     sand_sub.add_parser("clean", help="remove all dacode trial worktrees")
 
+    jev = sub.add_parser(
+        "judge-eval",
+        help="score Jev's Compose picks against recorded gate-verified winners",
+    )
+    jev.add_argument("--limit", type=int, default=None, help="max cases to evaluate")
+    jev.add_argument("--model", default=None, help="Jev model id (default: the pinned jev-1.13.0)")
+    jev.add_argument(
+        "--log",
+        default=None,
+        help="runlog path (default: DACODE_RUNLOG or ~/.local/state/dacode/runlog.jsonl)",
+    )
     sub.add_parser("layers", help="show the status of the five layers")
     return parser
 
@@ -151,6 +162,23 @@ def main(argv: list[str] | None = None) -> int:
     # the target repo's own .env first, then the canonical ~/.hermes/.env.
     repo_hint = Path(args.repo).expanduser() if getattr(args, "repo", None) else Path.cwd()
     load_env(repo_hint / ".env", *[p.replace("{repo}", str(repo_hint)) for p in DEFAULT_ENV_PATHS])
+
+    if args.command == "judge-eval":
+        from dacode.jeval import collect_cases, evaluate, summarize
+        from dacode.judgment import JevJudge
+        from dacode.runlog import load_events
+
+        cases = collect_cases(load_events(args.log))
+        if not cases:
+            print(
+                "no gate-verified compose cases in the run log yet — run tasks "
+                "and let the recorder accumulate (DACODE_RUNLOG, default "
+                "~/.local/state/dacode/runlog.jsonl)"
+            )
+            return 1
+        judge = JevJudge(model=args.model) if args.model else JevJudge()
+        print(summarize(evaluate(cases, judge, limit=args.limit)))
+        return 0
 
     if args.command == "layers":
         cfg = _make_config(args)

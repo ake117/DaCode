@@ -69,3 +69,9 @@ def vault(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return v
+
+
+@pytest.fixture(autouse=True)
+def _quiet_runlog(monkeypatch):
+    """Keep tests out of the real run log — eval data must come from real runs."""
+    monkeypatch.setenv("DACODE_RUNLOG", "off")

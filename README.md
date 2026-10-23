@@ -83,6 +83,9 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 # search vault memory
 .venv/bin/dacode memory search "harness2 propose probe compose"
 
+# score Jev's Compose picks against recorded gate-verified winners
+.venv/bin/dacode judge-eval --limit 10
+
 # inspect / clean trial worktrees
 .venv/bin/dacode sandbox list
 .venv/bin/dacode sandbox clean
@@ -100,7 +103,8 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 
 Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_LLM`,
 `DACODE_MODEL`, `DACODE_EXECUTOR`, `DACODE_BUDGET`, `DACODE_VARIANTS`,
-`DACODE_JUDGE`, `DACODE_ESCALATE_MODELS`.
+`DACODE_JUDGE`, `DACODE_ESCALATE_MODELS`, `DACODE_RUNLOG` (`off` disables
+the recorder; default `~/.local/state/dacode/runlog.jsonl`).
 
 ### AI providers
 
@@ -184,6 +188,7 @@ Built to the pstack rules:
 - [x] CLI + end-to-end tests
 - [x] Jev (TypeSafe System One) judge for the Compose pick (`--judge jev`)
 - [x] Judge triage after a failed round — retry / new proposal / escalate model / human review
+- [x] Run recorder (`dacode/runlog.py`) + `dacode judge-eval` — Jev agreement with the critic gate
 - [ ] Semantic embedding retrieval for the vault layer
 - [ ] Parallel probing of variants (multiple worktrees at once)
 - [ ] Container/bwrap isolation on top of the worktree

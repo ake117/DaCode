@@ -18,6 +18,8 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
+from dacode import runlog
+
 from dacode.harness.models import HarnessResult, HarnessVariant, ProbeResult
 
 if TYPE_CHECKING:
@@ -154,6 +156,17 @@ class HarnessOptimizer:
             )
         variant.score = _variant_score(result)
         variant.probe = result
+        runlog.record({
+            "type": "probe",
+            "task": variant.payload.get("task", ""),
+            "variant_id": variant.id,
+            "label": variant.label,
+            "exit_code": result.exit_code,
+            "tests_passed": result.tests_passed,
+            "tests_total": result.tests_total,
+            "critique_passed": result.critique_passed,
+            "score": variant.score,
+        })
         return result
 
     # -- compose -----------------------------------------------------------
@@ -175,6 +188,7 @@ class HarnessOptimizer:
         # typed probabilities. It never issues pass/fail verdicts — the critic
         # gate stays the only quality authority. A failure falls through to the
         # reasoning-model pick, then to the measured ranking.
+        chosen, chooser = fallback, "ranking"
         if self.judge is not None and len(ranked) > 1:
             try:
                 pick, confidence = self.judge.choice(
@@ -202,19 +216,39 @@ class HarnessOptimizer:
                 print(f"[judge] jev pick failed: {exc}", file=sys.stderr)
                 pick = None
             if pick is not None:
-                chosen = next((v for v in variants if v.id == pick), None)
-                if chosen is not None:
-                    return chosen
-        user = f"Task:\n{task}\n\nProbed variants (best first):\n{table}\n\nPick the best."
-        try:
-            raw = self.llm.complete(_COMPOSE_SYSTEM, user)
-            data = _parse_json_object(raw)
-            chosen = next((v for v in variants if v.id == str(data.get("best_id", ""))), None)
-            if chosen is not None:
-                return chosen
-        except Exception:  # noqa: BLE001 - fall back to the measured ranking
-            pass
-        return fallback
+                candidate = next((v for v in variants if v.id == pick), None)
+                if candidate is not None:
+                    chosen, chooser = candidate, "judge"
+        if chooser == "ranking":
+            user = f"Task:\n{task}\n\nProbed variants (best first):\n{table}\n\nPick the best."
+            try:
+                raw = self.llm.complete(_COMPOSE_SYSTEM, user)
+                data = _parse_json_object(raw)
+                candidate = next(
+                    (v for v in variants if v.id == str(data.get("best_id", ""))), None
+                )
+                if candidate is not None:
+                    chosen, chooser = candidate, "llm"
+            except Exception:  # noqa: BLE001 - fall back to the measured ranking
+                pass
+        runlog.record({
+            "type": "compose",
+            "task": task,
+            "table": [
+                {
+                    "id": v.id,
+                    "label": v.label,
+                    "score": v.score,
+                    "tests_passed": v.probe.tests_passed if v.probe else 0,
+                    "tests_total": v.probe.tests_total if v.probe else 0,
+                    "passed": bool(v.probe.critique_passed) if v.probe else False,
+                }
+                for v in ranked
+            ],
+            "chosen_id": chosen.id,
+            "chooser": chooser,
+        })
+        return chosen
 
     # -- full loop ---------------------------------------------------------
 
@@ -278,6 +312,15 @@ class HarnessOptimizer:
             if action == "retry_same":
                 reprobe = list(variants)
 
+        runlog.record({
+            "type": "run",
+            "task": task,
+            "rounds": rounds_run,
+            "passed": bool(best.probe and best.probe.critique_passed),
+            "needs_human_review": needs_human_review,
+            "best_id": best.id,
+            "best_score": best.score,
+        })
         return HarnessResult(
             task=task,
             rounds=rounds_run,
