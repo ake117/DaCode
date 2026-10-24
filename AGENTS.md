@@ -18,8 +18,11 @@ not about the code in general.
 - Write the failing test first, then ask for "make `tests/<file>.py` pass … do
   NOT modify the test file".
 - The critic fails a trial that edits, deletes or silences tests
-  (`tests_modified`, `tests_lost`, `tests_skipped`). A green suite reached by
-  changing an assertion is a false pass.
+  (`tests_modified`, `tests_lost`, `tests_skipped`), and a trial that touches gate
+  infrastructure (`tests_infra_modified`: `conftest.py`, `pytest.ini`, `tox.ini`,
+  `setup.cfg`, `pyproject.toml`) — a conftest can print a fake summary and exit 0.
+  A pass also requires `failed == 0`; counts are parsed from stdout, so exit code 0
+  alone proves nothing.
 - The suite must stay hermetic: `conftest.py` sets `DACODE_RUNLOG=off` and a
   temporary `DACODE_MEMORY_DB`; no test may reach an embedder or the network.
 

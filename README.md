@@ -346,7 +346,10 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
       shrink the suite (`tests_lost`) or silence it (`tests_skipped`)
 - [x] Per-variant timeout (`--variant-timeout`) and a cost/time ledger in the runlog + `state stats`
 - [x] `dacode retro` — reads the runlog and suggests harness changes (pstack #5)
-- [x] Test-integrity guards on the baseline — `tests_modified` / `tests_lost` / `tests_skipped`
+- [x] Test-integrity guards on the baseline — `tests_modified` / `tests_lost` /
+      `tests_skipped`, plus `tests_infra_modified` (a `conftest.py` or pytest config
+      can silence or spoof the gate itself) and a verdict that requires
+      `failed == 0`, not just exit code 0
 - [x] Fleet diversity — `--fleet a,b` puts one model per variant in a round; escalation prefers an untried family
 - [x] MCP memory server — `dacode mcp` (5 tools over stdio JSON-RPC, stdlib only)
 - [x] Bubblewrap isolation — `--isolate bwrap`: read-only host, empty home,

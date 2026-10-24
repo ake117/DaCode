@@ -22,6 +22,20 @@ from dacode.harness.optimizer import HarnessOptimizer
 GREEN = "def test_a():\n    assert 1 + 1 == 2\n"
 
 
+def _git_init(path: Path) -> None:
+    """The integrity check compares against git; a bare dir is a no-op."""
+    import subprocess
+
+    for cmd in (
+        ("git", "init", "-q", "-b", "main"),
+        ("git", "config", "user.email", "t@test.local"),
+        ("git", "config", "user.name", "T"),
+        ("git", "add", "-A"),
+        ("git", "commit", "-qm", "baseline"),
+    ):
+        subprocess.run(cmd, cwd=str(path), check=True, capture_output=True)
+
+
 def _workspace(tmp_path: Path, *, tests: dict[str, str]) -> Path:
     for name, body in tests.items():
         (tmp_path / name).write_text(textwrap.dedent(body))
@@ -165,3 +179,41 @@ def test_a_quiet_project_config_does_not_look_like_zero_tests(tmp_path):
     assert report.tests_total == 1
     assert report.tests_passed == 1
     assert report.passed is True
+
+
+def test_a_conftest_that_spoofs_the_summary_and_exits_zero_is_rejected(tmp_path):
+    """Found by an external audit: counts come from the runner's stdout."""
+    ws = _workspace(tmp_path, tests={"test_bad.py": "def test_fails():\n    assert 1 == 2\n"})
+    _git_init(ws)
+    (ws / "conftest.py").write_text(
+        "import atexit\nimport os\n\n\n"
+        "def _spoof():\n"
+        '    print("999 passed in 0.01s")\n'
+        "    os._exit(0)\n\n\n"
+        "atexit.register(_spoof)\n"
+    )
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    report = critic.review_workspace(ws)
+
+    assert report.passed is False
+    assert "tests_infra_modified" in {f.check for f in report.findings}
+
+
+def test_a_failing_test_cannot_pass_on_exit_code_alone(tmp_path):
+    ws = _workspace(tmp_path, tests={"test_bad.py": "def test_fails():\n    assert 1 == 2\n"})
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    report = critic.review_workspace(ws)
+    assert (report.tests_total, report.tests_failed) == (1, 1)
+    assert report.passed is False
+
+
+def test_gate_infrastructure_can_be_relaxed_explicitly(tmp_path):
+    """A repo that must edit pyproject.toml can opt out of that one guard."""
+    ws = _workspace(tmp_path, tests={"test_a.py": GREEN})
+    (ws / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    critic = PstackCritic(
+        test_command=(sys.executable, "-m", "pytest", "-q"),
+        gate_infra=("conftest.py",),
+    )
+    report = critic.review_workspace(ws)
+    assert "tests_infra_modified" not in {f.check for f in report.findings}

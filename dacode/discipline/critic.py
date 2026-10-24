@@ -68,6 +68,7 @@ class PstackCritic:
         timeout: float = 300.0,
         min_score: float = 0.6,
         isolation: IsolationPolicy | None = None,
+        gate_infra: tuple[str, ...] | None = None,
     ) -> None:
         # The gate must own its output contract: a repo pyproject that sets
         # `addopts = "-q"` compounds with our own `-q` into `-qq` (verbosity −2),
@@ -80,6 +81,10 @@ class PstackCritic:
         self.timeout = timeout
         self.min_score = min_score
         self.isolation = isolation
+        # Files that decide what the gate sees and what it reports. A trial that
+        # touches them can pass without doing the work (verified: a conftest that
+        # prints a fake summary and calls os._exit(0)).
+        self.gate_infra = tuple(gate_infra or DEFAULT_GATE_INFRA)
 
     def _scan_tests(self, workspace: Path) -> tuple[list[Finding], int]:
         findings: list[Finding] = []
@@ -210,6 +215,19 @@ class PstackCritic:
                         location=str(workspace / path),
                     )
                 )
+            elif name in self.gate_infra:
+                findings.append(
+                    Finding(
+                        check="tests_infra_modified",
+                        severity="error",
+                        message=(
+                            f"trial modified gate infrastructure ({path}) — a conftest or a "
+                            "pytest config can silence or spoof the gate itself; a human must "
+                            "review that change, not a trial"
+                        ),
+                        location=str(workspace / path),
+                    )
+                )
         return findings
 
     def review_workspace(
@@ -268,7 +286,14 @@ class PstackCritic:
             penalty += 0.35
         score = max(0.0, min(1.0, 1.0 - penalty))
 
-        passed = exit_code == 0 and total > 0 and not [f for f in findings if f.severity == "error"]
+        # `failed == 0` matters: counts come from the runner's stdout, so an exit
+        # code of 0 is not enough on its own (see _check_test_integrity).
+        passed = (
+            exit_code == 0
+            and total > 0
+            and failed == 0
+            and not [f for f in findings if f.severity == "error"]
+        )
         passed = passed and score >= self.min_score
 
         return CritiqueReport(
@@ -284,6 +309,16 @@ class PstackCritic:
             score=round(score, 3),
             ran=True,
         )
+
+
+DEFAULT_GATE_INFRA: tuple[str, ...] = (
+    "conftest.py",
+    "pytest.ini",
+    "tox.ini",
+    "setup.cfg",
+    "pyproject.toml",
+    ".coveragerc",
+)
 
 
 def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
