@@ -85,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
         "(unset = off)",
     )
 
+    retro = sub.add_parser("retro", help="read the runlog and suggest harness changes")
+    retro.add_argument("--days", type=int, default=14, help="look back this many days (default: 14)")
+    retro.add_argument("--task", default=None, help="filter by task substring")
+    retro.add_argument("--json", action="store_true", help="machine-readable output")
+
     mem = sub.add_parser("memory", help="query the vault memory layer")
     mem_sub = mem.add_subparsers(dest="mem_command", required=True)
     search = mem_sub.add_parser("search", help="retrieve relevant lessons for a query")
@@ -214,6 +219,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         judge = JevJudge(model=args.model) if args.model else JevJudge()
         print(summarize(evaluate(cases, judge, limit=args.limit)))
+        return 0
+
+    if args.command == "retro":
+        from dacode import retro
+
+        report = retro.build_report(since_days=args.days, task_filter=args.task)
+        if args.json:
+            print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            print(retro.render_text(report))
         return 0
 
     if args.command == "layers":

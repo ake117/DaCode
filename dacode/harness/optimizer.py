@@ -192,6 +192,7 @@ class HarnessOptimizer:
             "elapsed_s": result.elapsed_s,
             "tests_skipped": result.tests_skipped,
             "model": result.model,
+            "findings": [f.check for f in getattr(report, "findings", [])],
         })
         return result
 

@@ -247,6 +247,13 @@ Built to the pstack rules:
 
 ---
 
+### Reading the ledger
+
+```bash
+dacode state stats            # counts, avg_variant_s, slowest_variant_s, skipped tests
+dacode retro --days 14        # what to change next: pass rate, rounds, slow variants, tampering
+```
+
 ## Status / roadmap
 
 - [x] Layer 1 Vault Memory (keyword retrieval + ingestion)
@@ -260,6 +267,9 @@ Built to the pstack rules:
 - [x] Run recorder (`dacode/runlog.py`) + `dacode judge-eval` — Jev agreement with the critic gate
 - [x] SQLite local state store (`memory.db`) + FTS5 trigram search — `dacode state`
 - [x] Semantic retrieval with pluggable backends — DaCode-owned vector store by default (60/40 blend)
-- [ ] Parallel probing of variants (multiple worktrees at once)
+- [x] Parallel probing of variants — `--parallel N` (worktree creation stays serialised)
+- [x] Test-integrity + baseline guards — a trial may not edit tests (`tests_modified`),
+      shrink the suite (`tests_lost`) or silence it (`tests_skipped`)
+- [x] Per-variant timeout (`--variant-timeout`) and a cost/time ledger in the runlog + `state stats`
 - [ ] Container/bwrap isolation on top of the worktree
-- [ ] `dacode retro` — suggest harness improvements after a run (pstack #5)
+- [x] `dacode retro` — reads the runlog and suggests harness changes (pstack #5)
