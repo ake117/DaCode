@@ -67,6 +67,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="seconds a single variant may spend executing (default: 900)",
     )
     run.add_argument(
+        "--isolate",
+        choices=["none", "bwrap"],
+        default=None,
+        help="sandbox trials and the test gate with bubblewrap (default: none)",
+    )
+    run.add_argument(
+        "--isolate-network",
+        action="store_true",
+        help="allow the sandboxed trial to open sockets (an agent needs this)",
+    )
+    run.add_argument(
         "--fleet",
         default=None,
         help="comma-separated models probed side by side, e.g. "
@@ -173,6 +184,10 @@ def _make_config(args) -> DaCodeConfig:
         cfg.test_glob = args.test_glob
     if getattr(args, "variant_timeout", None) is not None:
         cfg.variant_timeout = args.variant_timeout
+    if getattr(args, "isolate", None):
+        cfg.isolate = args.isolate
+    if getattr(args, "isolate_network", False):
+        cfg.isolate_network = True
     if getattr(args, "fleet", None):
         cfg.fleet = [m.strip() for m in args.fleet.split(",") if m.strip()]
     if getattr(args, "parallel", None) is not None:

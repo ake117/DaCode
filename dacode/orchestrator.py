@@ -23,6 +23,7 @@ from dacode.judgment import build_judge
 from dacode.llm import build_llm
 from dacode.memory import Lesson, VaultMemory
 from dacode.sandbox import GitSandbox
+from dacode.sandbox.bwrap import IsolationPolicy, available as bwrap_available, describe as describe_isolation
 
 __all__ = ["DaCodeRig"]
 
@@ -48,12 +49,14 @@ class DaCodeRig:
         self.config = config
         self.llm = llm or build_llm(config.llm_kind, model=config.model, base_url=config.base_url)
         self.sandbox = sandbox or GitSandbox(config.repo, config.sandbox_root)
+        self.isolation = self._isolation_policy()
         self.executor = executor or self._build_executor()
         self.judge = build_judge(config.judge)
         self.critic = critic or PstackCritic(
             test_command=config.test_command,
             test_glob=config.test_glob,
             timeout=config.variant_timeout,
+            isolation=self.isolation,
         )
         self.memory = memory
         if self.memory is None and config.vault is not None and Path(config.vault).is_dir():
@@ -76,12 +79,43 @@ class DaCodeRig:
 
     def _build_executor(self):
         if self.config.executor == "script":
-            return ScriptExecutor(default_command=self.config.script_command)
-        return PiExecutor(model=self.config.model, timeout=self.config.variant_timeout)
+            return ScriptExecutor(
+                default_command=self.config.script_command,
+                timeout=self.config.variant_timeout,
+                isolation=self.isolation,
+            )
+        return PiExecutor(
+            model=self.config.model,
+            timeout=self.config.variant_timeout,
+            isolation=self.isolation,
+        )
+
+    def _isolation_policy(self) -> IsolationPolicy | None:
+        """Turn `--isolate` into a policy, refusing to pretend when bwrap is missing.
+
+        The executor always sees the network when isolation is on (it has to reach a
+        model); the gate never does.
+        """
+        if (self.config.isolate or "none").lower() in {"none", "off", ""}:
+            return None
+        if not bwrap_available():
+            raise RuntimeError(
+                "--isolate bwrap requested but bubblewrap is not installed "
+                "(install bubblewrap, or run with --isolate none)"
+            )
+        return IsolationPolicy(
+            enabled=True,
+            network=bool(self.config.isolate_network),
+            env_allow=(),
+        )
 
     # -- layer introspection ----------------------------------------------
 
     def layers(self) -> list[LayerStatus]:
+        report = [
+            LayerStatus("5b. Isolation", describe_isolation(self.isolation) if self.isolation else "off",
+                        self.isolation is None or bwrap_available()),
+        ]
         return [
             LayerStatus(
                 "1. Vault Memory",
@@ -92,7 +126,7 @@ class DaCodeRig:
             LayerStatus("3. Executor", self.config.executor, True),
             LayerStatus("4. pstack Critic", "static checks + real test run", True),
             LayerStatus("5. Git Sandbox", str(self.sandbox.sandbox_root), self.config.repo.is_dir()),
-        ]
+        ] + report
 
     # -- the run -----------------------------------------------------------
 

@@ -9,12 +9,14 @@ deepseek/deepseek-v4.1-flash) are used unless overridden here.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dacode.executor.base import ExecResult
+from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, wrap_command
 
 if TYPE_CHECKING:
     from dacode.harness.models import HarnessVariant
@@ -32,6 +34,7 @@ class PiExecutor:
         timeout: float = 900.0,
         extra_args: tuple[str, ...] = (),
         tools: tuple[str, ...] = (),
+        isolation: IsolationPolicy | None = None,
     ) -> None:
         self.binary = binary
         self.provider = provider
@@ -39,6 +42,7 @@ class PiExecutor:
         self.timeout = timeout
         self.extra_args = tuple(extra_args)
         self.tools = tuple(tools)
+        self.isolation = isolation
 
     def _resolve_binary(self) -> str | None:
         return shutil.which(self.binary)
@@ -66,6 +70,19 @@ class PiExecutor:
                 command="",
             )
         cmd = self.build_command(variant, variant.payload.get("task", ""))
+        if self.isolation is not None and self.isolation.enabled:
+            # The agent needs its own binary, config and (to reach a model) the
+            # network; everything else stays hidden.
+            binary_path = self._resolve_binary()
+            policy = self.isolation.with_paths(
+                Path(binary_path).resolve().parent if binary_path else None,
+                Path.home() / ".pi",
+                os.environ.get("NODE_PATH"),
+            )
+            try:
+                cmd = wrap_command(cmd, workspace=workspace, policy=policy)
+            except IsolationUnavailable as exc:
+                return ExecResult(exit_code=126, stderr=f"isolation unavailable: {exc}", command="")
         try:
             proc = subprocess.run(
                 cmd,

@@ -37,6 +37,8 @@ class DaCodeConfig:
     parallel: int = 1  # variants probed at once (worktree creation stays serialised)
     baseline: tuple[int, int] | None = None  # (total, skipped) measured on the untouched repo
     fleet: list[str] = field(default_factory=list)  # models probed side by side
+    isolate: str = "none"  # "bwrap" sandboxes trials and the test gate
+    isolate_network: bool = False  # trials may open sockets (an agent needs this)
 
     @classmethod
     def from_env(cls, repo: str | Path | None = None) -> "DaCodeConfig":
@@ -57,6 +59,8 @@ class DaCodeConfig:
             variant_timeout=float(os.environ.get("DACODE_VARIANT_TIMEOUT", "900")),
             parallel=int(os.environ.get("DACODE_PARALLEL", "1")),
             fleet=[m.strip() for m in os.environ.get("DACODE_FLEET", "").split(",") if m.strip()],
+            isolate=os.environ.get("DACODE_ISOLATE", "none"),
+            isolate_network=os.environ.get("DACODE_ISOLATE_NETWORK", "").lower() in {"1", "true", "on", "yes"},
         )
 
 

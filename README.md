@@ -221,6 +221,32 @@ kept so you can inspect the diff.
 
 ---
 
+## Isolation
+
+A worktree gives a trial a private branch, not a private machine. `--isolate bwrap`
+puts it in namespaces (bubblewrap, no daemon, no root):
+
+```bash
+dacode run "<task>" --executor pi --isolate bwrap --isolate-network \
+  --test-command "${VIRTUAL_ENV}/bin/python -m pytest -q -o addopts="
+```
+
+- Host filesystem mounted **read-only**, the user's home replaced by an empty
+  tmpfs, the trial workspace bound read-write — the only place a trial can write.
+- **Network off by default** (`--unshare-net`). The Pi executor needs it to reach a
+  model, so it opts in; the test gate never gets it.
+- Environment is cleared and rebuilt from an allow-list, so an unrelated secret in
+  your shell cannot leak into a trial.
+- The interpreter and its venv are re-bound read-only, including symlink targets —
+  a venv under `$HOME` is otherwise hidden by the home tmpfs.
+- If bwrap is missing the run fails closed (`--isolate none` is the explicit
+  opt-out), and a gate that cannot be sandboxed returns exit 125 instead of
+  running unsandboxed.
+
+Verified: inside a sandboxed trial `cat ~/.ssh/id_rsa`, `cat ~/.hermes/.env`,
+listing the vault and `curl https://example.com` all fail, a file written in the
+workspace succeeds, and the 180-test gate still runs to completion.
+
 ## Tests
 
 ```bash

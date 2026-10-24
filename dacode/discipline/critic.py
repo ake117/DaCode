@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import fnmatch
 import subprocess
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dacode.discipline.checks import Finding, check_python_test
+from dacode.sandbox.bwrap import (
+    IsolationPolicy,
+    IsolationUnavailable,
+    interpreter_binds,
+    wrap_command,
+)
 
 __all__ = ["CritiqueReport", "PstackCritic"]
 
@@ -60,6 +67,7 @@ class PstackCritic:
         test_glob: str = "test_*.py",
         timeout: float = 300.0,
         min_score: float = 0.6,
+        isolation: IsolationPolicy | None = None,
     ) -> None:
         # The gate must own its output contract: a repo pyproject that sets
         # `addopts = "-q"` compounds with our own `-q` into `-qq` (verbosity −2),
@@ -71,6 +79,7 @@ class PstackCritic:
         self.test_glob = test_glob
         self.timeout = timeout
         self.min_score = min_score
+        self.isolation = isolation
 
     def _scan_tests(self, workspace: Path) -> tuple[list[Finding], int]:
         findings: list[Finding] = []
@@ -102,15 +111,34 @@ class PstackCritic:
             return None
         return (total, skipped)
 
+    def _wrap(self, cmd: list[str], workspace: Path) -> list[str]:
+        """Run the gate under bwrap when isolation is on.
+
+        A suite is model-written code too: it must not reach the network, the
+        user's home, or anything outside its own worktree.
+        """
+        if self.isolation is None or not self.isolation.enabled:
+            return cmd
+        policy = self.isolation.with_paths(
+            *interpreter_binds(self.test_command),
+            os.environ.get("VIRTUAL_ENV"),
+        )
+        # Fail closed: an isolated run that silently fell back to the host would be
+        # worse than a failed gate. The exception is re-raised as a failed probe by
+        # _run_tests (exit 125) so the caller sees a verdict, not a traceback.
+        return wrap_command(cmd, workspace=workspace, policy=policy)
+
     def _run_tests(self, workspace: Path) -> tuple[int, str, str, int, int, int]:
         try:
             proc = subprocess.run(
-                list(self.test_command),
+                self._wrap(list(self.test_command), workspace),
                 cwd=str(workspace),
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
             )
+        except IsolationUnavailable as exc:
+            return 125, "", f"isolation unavailable: {exc}", 0, 0, 0
         except FileNotFoundError as exc:
             return 127, "", f"test command not found: {exc}", 0, 0, 0
         except subprocess.TimeoutExpired as exc:
@@ -132,7 +160,7 @@ class PstackCritic:
         cmd = [*self.test_command, "-o", "addopts="]
         try:
             proc = subprocess.run(
-                cmd,
+                self._wrap(cmd, workspace),
                 cwd=str(workspace),
                 capture_output=True,
                 text=True,

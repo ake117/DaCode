@@ -43,8 +43,12 @@ def _rig(repo: Path, vault: Path) -> DaCodeRig:
 def test_rig_reports_five_ready_layers(rig_repo, vault):
     rig = _rig(rig_repo, vault)
     layers = rig.layers()
-    assert [layer.name.split(".")[0] for layer in layers] == ["1", "2", "3", "4", "5"]
-    assert all(layer.ready for layer in layers)
+    core = [layer for layer in layers if not layer.name.startswith("5b")]
+    assert [layer.name.split(".")[0] for layer in core] == ["1", "2", "3", "4", "5"]
+    assert all(layer.ready for layer in core)
+    # isolation is reported separately: off by default, and that is not a problem
+    isolation = [layer for layer in layers if layer.name.startswith("5b")]
+    assert len(isolation) == 1 and isolation[0].detail == "off"
 
 
 def test_rig_run_passes_and_ingests_a_lesson(rig_repo, vault):
