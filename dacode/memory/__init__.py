@@ -16,6 +16,7 @@ backend silently degrades to keywords.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -296,11 +297,11 @@ class VaultMemory:
         tags = "\n".join(f"  - {t}" for t in lesson.tags) or "  - dacode/lesson"
         frontmatter = (
             "---\n"
-            f'title: "{lesson.title}"\n'
+            f"title: {json.dumps(lesson.title, ensure_ascii=False)}\n"
             f"created: {created}\n"
             "type: lesson\n"
             "source: dacode\n"
-            f"source_task: {lesson.source_task or 'n/a'}\n"
+            f"source_task: {json.dumps(lesson.source_task or 'n/a', ensure_ascii=False)}\n"
             "tags:\n"
             f"{tags}\n"
             "---\n\n"
