@@ -345,5 +345,27 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
 - [x] Test-integrity + baseline guards — a trial may not edit tests (`tests_modified`),
       shrink the suite (`tests_lost`) or silence it (`tests_skipped`)
 - [x] Per-variant timeout (`--variant-timeout`) and a cost/time ledger in the runlog + `state stats`
-- [ ] Container/bwrap isolation on top of the worktree
 - [x] `dacode retro` — reads the runlog and suggests harness changes (pstack #5)
+- [x] Test-integrity guards on the baseline — `tests_modified` / `tests_lost` / `tests_skipped`
+- [x] Fleet diversity — `--fleet a,b` puts one model per variant in a round; escalation prefers an untried family
+- [x] MCP memory server — `dacode mcp` (5 tools over stdio JSON-RPC, stdlib only)
+- [x] Bubblewrap isolation — `--isolate bwrap`: read-only host, empty home,
+      workspace-only writes, network unshared, allow-listed env; the gate is
+      sandboxed too and fails closed
+
+### Next
+
+- [ ] **Network allow-list for isolated trials.** `--isolate bwrap` is
+      all-or-nothing on the network today: the Pi executor needs it, a task that
+      fetches a dependency needs it, and then trial code can reach anything.
+      Planned: an egress proxy on the host with a per-run host allow-list, DNS
+      pinned to it, and `--isolate-network=allowlist:<file>`. Gate: a trial reaches
+      a listed host, any other host fails, and an unparsable policy refuses to
+      start — never a silent "allow all".
+- [ ] **DaCode as a Kanban worker.** Take a card, run it through the rig, report
+      back with evidence. Planned: `dacode kanban work <task_id>` reads the gate
+      command from the card body, runs one worktree per card under
+      `--isolate bwrap`, then `kanban_complete` (gate output, changed files, runlog
+      path) or `kanban_block` with the triage reason when the gate keeps failing.
+      Gate: a card completes end to end, a failing card blocks with a readable
+      reason, and no card is claimed twice.
