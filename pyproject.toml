@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dacode"
-version = "0.1.0"
+version = "0.2.0"
 description = "DaCode — The Ultimate Autonomous Engineering Rig (Pi + Harness² + pstack + Vault + Sandbox)"
 readme = "README.md"
 requires-python = ">=3.11"
