@@ -61,6 +61,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--keep-worktree", action="store_true", help="keep losing trial worktrees")
     run.add_argument(
+        "--variant-timeout",
+        type=float,
+        default=None,
+        help="seconds a single variant may spend executing (default: 900)",
+    )
+    run.add_argument(
+        "--parallel",
+        type=int,
+        default=None,
+        help="probe this many variants at once (default: 1; worktree creation stays serialised)",
+    )
+    run.add_argument(
         "--escalate-models",
         default=None,
         help="comma-separated model ladder for the judge's escalate_model "
@@ -141,6 +153,10 @@ def _make_config(args) -> DaCodeConfig:
         cfg.test_command = ("bash", "-c", args.test_command)
     if getattr(args, "test_glob", None):
         cfg.test_glob = args.test_glob
+    if getattr(args, "variant_timeout", None) is not None:
+        cfg.variant_timeout = args.variant_timeout
+    if getattr(args, "parallel", None) is not None:
+        cfg.parallel = max(1, args.parallel)
     if getattr(args, "keep_worktree", False):
         cfg.keep_winning_worktree = True
     if getattr(args, "judge", None):

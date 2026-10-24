@@ -45,6 +45,9 @@ class ProbeResult:
     tests_passed: int = 0
     critique_passed: bool = False
     critique_score: float = 0.0
+    elapsed_s: float = 0.0
+    tests_skipped: int = 0
+    model: str | None = None
     stdout: str = ""
     stderr: str = ""
 

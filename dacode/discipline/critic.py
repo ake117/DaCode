@@ -20,6 +20,7 @@ class CritiqueReport:
     tests_total: int = 0
     tests_passed: int = 0
     tests_failed: int = 0
+    tests_skipped: int = 0
     exit_code: int | None = None
     stdout: str = ""
     stderr: str = ""
@@ -87,7 +88,21 @@ class PstackCritic:
             findings.extend(found)
         return findings, count
 
-    def _run_tests(self, workspace: Path) -> tuple[int, str, str, int, int]:
+    def measure_baseline(self, repo: Path) -> tuple[int, int] | None:
+        """Count (total, skipped) on the untouched repo, once per run.
+
+        A trial that deletes tests or silences them with skips keeps the suite
+        green without proving anything; the baseline is what makes that visible.
+        """
+        try:
+            exit_code, stdout, _stderr, total, _failed, skipped = self._run_tests(Path(repo))
+        except Exception:  # noqa: BLE001 - a missing baseline must never block a run
+            return None
+        if total <= 0:
+            return None
+        return (total, skipped)
+
+    def _run_tests(self, workspace: Path) -> tuple[int, str, str, int, int, int]:
         try:
             proc = subprocess.run(
                 list(self.test_command),
@@ -97,11 +112,11 @@ class PstackCritic:
                 timeout=self.timeout,
             )
         except FileNotFoundError as exc:
-            return 127, "", f"test command not found: {exc}", 0, 0
+            return 127, "", f"test command not found: {exc}", 0, 0, 0
         except subprocess.TimeoutExpired as exc:
-            return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0
-        total, failed = _parse_test_summary(proc.stdout)
-        return proc.returncode, proc.stdout, proc.stderr, total, failed
+            return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0
+        total, failed, skipped = _parse_test_counts(proc.stdout)
+        return proc.returncode, proc.stdout, proc.stderr, total, failed, skipped
 
     def _check_test_integrity(self, workspace: Path) -> list[Finding]:
         """A trial may not edit, add or delete a test file.
@@ -142,11 +157,43 @@ class PstackCritic:
                 )
         return findings
 
-    def review_workspace(self, workspace: str | Path) -> CritiqueReport:
+    def review_workspace(
+        self,
+        workspace: str | Path,
+        *,
+        baseline: tuple[int, int] | None = None,
+    ) -> CritiqueReport:
         workspace = Path(workspace)
         findings, _files = self._scan_tests(workspace)
         findings.extend(self._check_test_integrity(workspace))
-        exit_code, stdout, stderr, total, failed = self._run_tests(workspace)
+        exit_code, stdout, stderr, total, failed, skipped = self._run_tests(workspace)
+
+        if baseline is not None:
+            base_total, base_skipped = baseline
+            if total < base_total:
+                findings.append(
+                    Finding(
+                        check="tests_lost",
+                        severity="error",
+                        message=(
+                            f"the suite shrank: {total} test(s) now vs {base_total} at baseline "
+                            "— deleting or disabling tests is not a fix"
+                        ),
+                        location=str(workspace),
+                    )
+                )
+            if skipped > base_skipped:
+                findings.append(
+                    Finding(
+                        check="tests_skipped",
+                        severity="error",
+                        message=(
+                            f"{skipped} test(s) skipped vs {base_skipped} at baseline "
+                            "— a skipped test proves nothing"
+                        ),
+                        location=str(workspace),
+                    )
+                )
         passed_count = max(0, total - failed)
 
         # pstack #9 — a report without a run is not a report.
@@ -175,12 +222,25 @@ class PstackCritic:
             tests_total=total,
             tests_passed=passed_count,
             tests_failed=failed,
+            tests_skipped=skipped,
             exit_code=exit_code,
             stdout=stdout,
             stderr=stderr,
             score=round(score, 3),
             ran=True,
         )
+
+
+def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
+    """``(total, failed, skipped)`` — see :func:`_parse_test_summary`."""
+    import re
+
+    total, failed = _parse_test_summary(stdout)
+    skipped = 0
+    match = re.search(r"(\d+)\s+skipped", stdout)
+    if match:
+        skipped = int(match.group(1))
+    return total, failed, skipped
 
 
 def _parse_test_summary(stdout: str) -> tuple[int, int]:

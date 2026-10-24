@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS variants (
     tests_passed INTEGER,
     tests_total INTEGER,
     critique_passed INTEGER,
-    exit_code INTEGER
+    exit_code INTEGER,
+    elapsed_s REAL,
+    tests_skipped INTEGER,
+    model TEXT
 );
 CREATE TABLE IF NOT EXISTS picks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +121,23 @@ def _index(con, kind: str, task: str, label: str, detail: str, ref_id, ts: float
         pass
 
 
+def _migrate(con) -> None:
+    """Add columns introduced after a store was first created."""
+    wanted = {
+        "variants": {
+            "elapsed_s": "REAL",
+            "tests_skipped": "INTEGER",
+            "model": "TEXT",
+        },
+        "runs": {"elapsed_s": "REAL"},
+    }
+    for table, columns in wanted.items():
+        existing = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
+        for name, kind in columns.items():
+            if name not in existing:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+
+
 def ingest(event: dict) -> None:
     """Mirror one runlog event into the store; never raises."""
     try:
@@ -125,17 +145,19 @@ def ingest(event: dict) -> None:
         if con is None:
             return
         with con:
+            _migrate(con)
             kind = event.get("type")
             ts = float(event.get("ts") or time.time())
             task = str(event.get("task") or "")
             if kind == "run":
                 cur = con.execute(
                     "INSERT INTO runs(ts, task, rounds, passed, needs_human_review,"
-                    " best_id, best_score) VALUES(?,?,?,?,?,?,?)",
+                    " best_id, best_score, elapsed_s) VALUES(?,?,?,?,?,?,?,?)",
                     (
                         ts, task, event.get("rounds"), _flag(event.get("passed")),
                         _flag(event.get("needs_human_review")),
                         event.get("best_id"), event.get("best_score"),
+                        event.get("elapsed_s"),
                     ),
                 )
                 _index(
@@ -147,13 +169,15 @@ def ingest(event: dict) -> None:
             elif kind == "probe":
                 cur = con.execute(
                     "INSERT INTO variants(ts, task, variant_id, label, score,"
-                    " tests_passed, tests_total, critique_passed, exit_code)"
-                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                    " tests_passed, tests_total, critique_passed, exit_code,"
+                    " elapsed_s, tests_skipped, model)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         ts, task, event.get("variant_id"), event.get("label"),
                         event.get("score"), event.get("tests_passed"),
                         event.get("tests_total"), _flag(event.get("critique_passed")),
-                        event.get("exit_code"),
+                        event.get("exit_code"), event.get("elapsed_s"),
+                        event.get("tests_skipped"), event.get("model"),
                     ),
                 )
                 _index(
@@ -239,6 +263,13 @@ def stats() -> dict:
             "variants_failed": one("SELECT COUNT(*) FROM variants WHERE critique_passed=0"),
             "picks": one("SELECT COUNT(*) FROM picks"),
             "last_run_ts": one("SELECT MAX(ts) FROM runs"),
+            "avg_variant_s": round(con.execute(
+                "SELECT COALESCE(AVG(elapsed_s), 0) FROM variants WHERE elapsed_s IS NOT NULL"
+            ).fetchone()[0], 1),
+            "slowest_variant_s": round(con.execute(
+                "SELECT COALESCE(MAX(elapsed_s), 0) FROM variants"
+            ).fetchone()[0], 1),
+            "tests_skipped": one("SELECT COALESCE(SUM(tests_skipped), 0) FROM variants"),
             "fts": _fts_ready(con),
         }
     finally:

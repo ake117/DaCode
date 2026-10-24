@@ -33,6 +33,9 @@ class DaCodeConfig:
 
     test_command: tuple[str, ...] | None = None
     test_glob: str = "test_*.py"
+    variant_timeout: float = 900.0  # seconds a single variant may spend executing
+    parallel: int = 1  # variants probed at once (worktree creation stays serialised)
+    baseline: tuple[int, int] | None = None  # (total, skipped) measured on the untouched repo
 
     @classmethod
     def from_env(cls, repo: str | Path | None = None) -> "DaCodeConfig":
@@ -50,6 +53,8 @@ class DaCodeConfig:
             escalate_models=_env_model_ladder(),
             test_command=_env_test_command(),
             test_glob=os.environ.get("DACODE_TEST_GLOB", "test_*.py"),
+            variant_timeout=float(os.environ.get("DACODE_VARIANT_TIMEOUT", "900")),
+            parallel=int(os.environ.get("DACODE_PARALLEL", "1")),
         )
 
 

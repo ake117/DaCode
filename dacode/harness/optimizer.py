@@ -13,6 +13,10 @@ is deterministic and testable with a stub.
 
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import json
 import re
 import sys
@@ -70,6 +74,8 @@ class HarnessOptimizer:
         base_prompt: str = DEFAULT_SYSTEM_PROMPT,
         keep_winning_worktree: bool = False,
         escalation_models: list[str] | None = None,
+        baseline: tuple[int, int] | None = None,
+        parallel: int = 1,
     ) -> None:
         self.llm = llm
         self.sandbox = sandbox
@@ -82,6 +88,10 @@ class HarnessOptimizer:
         self.base_prompt = base_prompt
         self.keep_winning_worktree = keep_winning_worktree
         self.escalation_models = list(escalation_models or [])
+        # (total, skipped) measured on the untouched repo; None disables the guard
+        self.baseline = baseline
+        self.parallel = max(1, parallel)
+        self._sandbox_lock = threading.Lock()
 
     # -- propose -----------------------------------------------------------
 
@@ -128,10 +138,18 @@ class HarnessOptimizer:
     def probe(self, variant: HarnessVariant, task: str, trial_id: str) -> ProbeResult:
         """Run one variant end-to-end in a fresh isolated worktree."""
         variant.payload.setdefault("task", task)
-        workspace = self.sandbox.create(trial_id)
+        # git worktree add is not safe to run concurrently on one repo: keep
+        # creation serialised, run the executor itself in parallel below.
+        with self._sandbox_lock:
+            workspace = self.sandbox.create(trial_id)
+        started = time.perf_counter()
         try:
             exec_result = self.executor.run(variant, workspace)
-            report = self.critic.review_workspace(workspace)
+            try:
+                report = self.critic.review_workspace(workspace, baseline=self.baseline)
+            except TypeError:
+                # a custom critic may predate the baseline argument
+                report = self.critic.review_workspace(workspace)
             if report.passed:
                 self.sandbox.checkpoint(trial_id, f"dacode: {variant.label} passed ({trial_id})")
             result = ProbeResult(
@@ -144,6 +162,9 @@ class HarnessOptimizer:
                 critique_score=report.score,
                 stdout=exec_result.stdout[-4000:],
                 stderr=exec_result.stderr[-2000:],
+                elapsed_s=round(time.perf_counter() - started, 3),
+                tests_skipped=getattr(report, "tests_skipped", 0),
+                model=getattr(self.executor, "model", None),
             )
         except Exception as exc:  # noqa: BLE001 - a failed trial must not kill the run
             result = ProbeResult(
@@ -153,6 +174,8 @@ class HarnessOptimizer:
                 critique_passed=False,
                 critique_score=0.0,
                 stderr=f"trial error: {exc!r}",
+                elapsed_s=round(time.perf_counter() - started, 3),
+                model=getattr(self.executor, "model", None),
             )
         variant.score = _variant_score(result)
         variant.probe = result
@@ -166,8 +189,37 @@ class HarnessOptimizer:
             "tests_total": result.tests_total,
             "critique_passed": result.critique_passed,
             "score": variant.score,
+            "elapsed_s": result.elapsed_s,
+            "tests_skipped": result.tests_skipped,
+            "model": result.model,
         })
         return result
+
+    def probe_round(self, task: str, variants: list[HarnessVariant], round_no: int) -> None:
+        """Probe every variant of a round, in parallel when allowed.
+
+        Worktree creation stays serialised (one git index per repo), so the
+        parallelism that matters — the executor's own wall time — is what
+        overlaps.
+        """
+        jobs = []
+        for idx, variant in enumerate(variants, start=1):
+            trial_id = f"{_slug(task)}-r{round_no}-{idx}-{variant.id}"
+            variant.payload.setdefault("task", task)
+            jobs.append((variant, trial_id))
+
+        if self.parallel <= 1 or len(jobs) == 1:
+            for variant, trial_id in jobs:
+                self.probe(variant, task, trial_id)
+            return
+
+        with ThreadPoolExecutor(max_workers=min(self.parallel, len(jobs))) as pool:
+            futures = [pool.submit(self.probe, variant, task, trial_id) for variant, trial_id in jobs]
+            for future in futures:
+                try:
+                    future.result()
+                except Exception:  # noqa: BLE001 - probe() already records its own failures
+                    pass
 
     # -- compose -----------------------------------------------------------
 
@@ -264,6 +316,7 @@ class HarnessOptimizer:
         if base is None:
             base = HarnessVariant(system_prompt=self.base_prompt, label="base")
 
+        run_started = time.perf_counter()
         all_variants: list[HarnessVariant] = []
         seen: set[str] = set()
         best = base
@@ -282,10 +335,8 @@ class HarnessOptimizer:
                 reprobe = None
             else:
                 variants = self.propose(task, best, self.variants_per_round)
-            for idx, variant in enumerate(variants, start=1):
-                trial_id = f"{_slug(task)}-r{round_no}-{idx}-{variant.id}"
-                variant.payload.setdefault("task", task)
-                self.probe(variant, task, trial_id)
+            self.probe_round(task, variants, round_no)
+            for variant in variants:
                 if variant.id not in seen:
                     seen.add(variant.id)
                     all_variants.append(variant)
@@ -315,6 +366,7 @@ class HarnessOptimizer:
         runlog.record({
             "type": "run",
             "task": task,
+            "elapsed_s": round(time.perf_counter() - run_started, 3),
             "rounds": rounds_run,
             "passed": bool(best.probe and best.probe.critique_passed),
             "needs_human_review": needs_human_review,

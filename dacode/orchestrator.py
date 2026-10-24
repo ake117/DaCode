@@ -53,6 +53,7 @@ class DaCodeRig:
         self.critic = critic or PstackCritic(
             test_command=config.test_command,
             test_glob=config.test_glob,
+            timeout=config.variant_timeout,
         )
         self.memory = memory
         if self.memory is None and config.vault is not None and Path(config.vault).is_dir():
@@ -65,6 +66,8 @@ class DaCodeRig:
             memory=self.memory,
             judge=self.judge,
             escalation_models=config.escalate_models,
+            baseline=config.baseline,
+            parallel=config.parallel,
             budget=config.budget,
             variants_per_round=config.variants_per_round,
             keep_winning_worktree=config.keep_winning_worktree,
@@ -73,7 +76,7 @@ class DaCodeRig:
     def _build_executor(self):
         if self.config.executor == "script":
             return ScriptExecutor(default_command=self.config.script_command)
-        return PiExecutor(model=self.config.model)
+        return PiExecutor(model=self.config.model, timeout=self.config.variant_timeout)
 
     # -- layer introspection ----------------------------------------------
 
@@ -107,6 +110,14 @@ class DaCodeRig:
         )
 
         # 2 & 3. Experimentation + Discipline (inside optimizer.probe)
+        # The gate needs to know how many tests the untouched repo has, so a
+        # trial cannot "fix" a red suite by deleting or skipping tests.
+        baseline = None
+        try:
+            baseline = self.critic.measure_baseline(self.config.repo)
+        except Exception:  # noqa: BLE001 - a missing baseline must not block the run
+            baseline = None
+        self.optimizer.baseline = baseline
         result = self.optimizer.run(task, base)
 
         # 4. Memory Ingestion
