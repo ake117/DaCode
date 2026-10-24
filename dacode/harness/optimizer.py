@@ -148,6 +148,7 @@ class HarnessOptimizer:
         with self._sandbox_lock:
             workspace = self.sandbox.create(trial_id)
         started = time.perf_counter()
+        report = None  # a failed trial must still be recordable
         try:
             exec_result = self.executor.run(variant, workspace)
             try:

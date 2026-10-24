@@ -106,8 +106,13 @@ class DaCodeRig:
         The executor always sees the network when isolation is on (it has to reach a
         model); the gate never does.
         """
-        if (self.config.isolate or "none").lower() in {"none", "off", ""}:
+        setting = (self.config.isolate or "none").strip().lower()
+        if setting in {"none", "off", "false", "0", "no", ""}:
             return None
+        if setting != "bwrap":
+            raise RuntimeError(
+                f"unknown --isolate value {self.config.isolate!r} — use 'bwrap' or 'none'"
+            )
         if not bwrap_available():
             raise RuntimeError(
                 "--isolate bwrap requested but bubblewrap is not installed "

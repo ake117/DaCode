@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -331,11 +332,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.sand_command == "clean":
             removed = 0
+            repo_path = Path(cfg.repo).resolve()
+            root = Path(sandbox.sandbox_root).resolve()
             for info in sandbox.list():
-                name = Path(info.path).name
-                if "dacode" in str(info.branch or "") or name.startswith("dacode"):
-                    sandbox.remove(name, delete_branch=True)
-                    removed += 1
+                path = Path(info.path).resolve()
+                # Never touch the main checkout: a repo named `dacode*` or a branch
+                # containing "dacode" used to match its own clean rule.
+                if path == repo_path:
+                    continue
+                if not path.is_relative_to(root):
+                    continue
+                sandbox.remove(path.name, delete_branch=True, force=True)
+                removed += 1
             print(f"removed {removed} trial worktree(s)")
             return 0
 

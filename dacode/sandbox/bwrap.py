@@ -152,23 +152,29 @@ def wrap_command(
     if not policy.network:
         argv += ["--unshare-net"]
 
+    # /proc, /dev and /tmp come before any bind: a workspace under /tmp would
+    # otherwise be mounted over by the tmpfs and bwrap would fail to chdir.
+    argv += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
+
     for path in policy.read_only_paths:
-        candidates = _bind_candidates(Path(path).expanduser())
-        for candidate in candidates:
+        for candidate in _bind_candidates(Path(path).expanduser(), home=home_path):
             argv += ["--ro-bind", str(candidate), str(candidate)]
 
     # The trial workspace is the only writable place that survives the run.
     argv += ["--bind", str(workspace_path), str(workspace_path)]
-    argv += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
     argv += ["--chdir", str(workspace_path)]
 
-    for name, value in allowed_env(policy, env).items():
+    environment = allowed_env(policy, env)
+    # TMPDIR from the host may point inside the home tmpfs; inside the sandbox the
+    # only temp directory that exists is /tmp.
+    environment["TMPDIR"] = "/tmp"
+    for name, value in environment.items():
         argv += ["--setenv", name, value]
     argv += ["--", *command]
     return argv
 
 
-def _bind_candidates(path: Path) -> list[Path]:
+def _bind_candidates(path: Path, *, home: Path | None = None) -> list[Path]:
     """A path plus what it really points at.
 
     A venv's ``bin/python`` is usually a symlink into the base interpreter, which
@@ -176,19 +182,29 @@ def _bind_candidates(path: Path) -> list[Path]:
     leaves a dangling target and every command dies with
     ``execvp …: No such file or directory``. Bind the target (and its prefix) too.
     """
+    home_path = home or Path.home().resolve()
     out: list[Path] = []
+
+    def _exposes_home(candidate: Path) -> bool:
+        """Binding $HOME or an ancestor of it would undo the home tmpfs."""
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            return False
+        return resolved == home_path or home_path.is_relative_to(resolved)
+
     for candidate in (path,):
-        if candidate.exists():
+        if candidate.exists() and not _exposes_home(candidate):
             out.append(candidate)
     try:
         real = path.resolve()
     except OSError:
         real = None
     if real is not None and real != path:
-        if real.exists():
+        if real.exists() and not _exposes_home(real):
             out.append(real)
         prefix = real.parent.parent  # <prefix>/bin/python → <prefix>
-        if prefix.exists():
+        if prefix.exists() and not _exposes_home(prefix):
             out.append(prefix)
     return list(dict.fromkeys(out))
 

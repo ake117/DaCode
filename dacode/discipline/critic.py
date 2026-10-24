@@ -317,19 +317,36 @@ DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "tox.ini",
     "setup.cfg",
     "pyproject.toml",
+    "setup.py",
     ".coveragerc",
+    # modules that shadow or hook the runner inside the workspace
+    "pytest.py",
+    "_pytest.py",
+    "sitecustomize.py",
+    "usercustomize.py",
 )
 
 
 def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
-    """``(total, failed, skipped)`` — see :func:`_parse_test_summary`."""
+    """``(total, failed, skipped)`` — see :func:`_parse_test_summary`.
+
+    The skip count must come from the *same* summary line as the pass/fail counts.
+    Searching the whole stdout let a trial print ``0 skipped`` early and mask real
+    skips (external audit, verified).
+    """
     import re
 
     total, failed = _parse_test_summary(stdout)
     skipped = 0
-    match = re.search(r"(\d+)\s+skipped", stdout)
-    if match:
-        skipped = int(match.group(1))
+    for line in reversed(stdout.splitlines()):
+        stripped = line.strip().strip("=").strip()
+        if not stripped:
+            continue
+        if re.search(r"\d+\s+(passed|failed|checks?\b)", stripped) or "skipped" in stripped:
+            match = re.search(r"(\d+)\s+skipped", stripped)
+            if match:
+                skipped = int(match.group(1))
+            break
     return total, failed, skipped
 
 

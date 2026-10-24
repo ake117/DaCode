@@ -1,0 +1,127 @@
+"""Regressions for the external audit (Gemini 4 Argon, via agy) — verified findings only."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from dacode.discipline.critic import PstackCritic, _parse_test_counts
+from dacode.executor.base import ExecResult
+from dacode.harness.models import HarnessVariant
+from dacode.harness.optimizer import HarnessOptimizer
+from dacode.sandbox import GitSandbox
+
+
+
+class _CrashingExecutor:
+    model = "test-model"
+
+    def run(self, variant, workspace):
+        raise RuntimeError("executor exploded")
+
+
+class _Sandbox:
+    def __init__(self, root: Path):
+        self.root = root
+
+    def create(self, trial_id: str) -> Path:
+        path = self.root / trial_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def checkpoint(self, *args, **kwargs):
+        return None
+
+
+def test_probe_records_a_crashed_trial_instead_of_raising(tmp_path):
+    """Audit H2: `report` was unbound in the except path → UnboundLocalError."""
+    opt = HarnessOptimizer(
+        llm=None,
+        sandbox=_Sandbox(tmp_path / "wt"),
+        executor=_CrashingExecutor(),
+        critic=PstackCritic(),
+        budget=1,
+        variants_per_round=1,
+    )
+    variant = HarnessVariant(label="boom")
+    result = opt.probe(variant, "task", "t1")
+
+    assert result.critique_passed is False
+    assert "executor exploded" in result.stderr
+    assert variant.probe is result
+
+
+def test_a_pytest_module_in_the_workspace_is_gate_infrastructure(tmp_path):
+    """Audit C2c: `workspace/pytest.py` shadows the runner (cwd is sys.path[0])."""
+    (tmp_path / "test_a.py").write_text("def test_a():\n    assert True\n")
+    for cmd in (
+        ("git", "init", "-q", "-b", "main"),
+        ("git", "config", "user.email", "t@test.local"),
+        ("git", "config", "user.name", "T"),
+        ("git", "add", "-A"),
+        ("git", "commit", "-qm", "baseline"),
+    ):
+        subprocess.run(cmd, cwd=str(tmp_path), check=True, capture_output=True)
+
+    (tmp_path / "pytest.py").write_text("raise SystemExit(0)\n")
+    report = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q")).review_workspace(tmp_path)
+
+    assert "tests_infra_modified" in {f.check for f in report.findings}
+    assert report.passed is False
+
+
+def test_skips_are_read_from_the_summary_line_not_the_first_match():
+    """Audit C2b: printing '0 skipped' early masked real skips."""
+    assert _parse_test_counts("0 skipped\n2 passed, 3 skipped in 0.1s") == (2, 0, 3)
+    assert _parse_test_counts("2 passed, 3 skipped in 0.1s") == (2, 0, 3)
+
+
+def test_retro_json_works_from_the_cli(tmp_path):
+    """Audit M3: `dacode retro --json` raised NameError (json never imported)."""
+    log = tmp_path / "runlog.jsonl"
+    log.write_text(json.dumps({"ts": 2_000_000_000, "type": "run", "task": "t", "rounds": 1, "passed": True}) + "\n")
+    proc = subprocess.run(
+        [sys.executable, "-m", "dacode.cli", "retro", "--json", "--days", "36500"],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "DACODE_RUNLOG": str(log)},
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout[proc.stdout.index("{") :])
+    assert payload["events"] >= 1
+
+
+def test_sandbox_clean_never_removes_the_main_checkout(tmp_path):
+    """Audit H7: a repo named `dacode*` matched its own clean rule."""
+    repo = tmp_path / "dacode-project"
+    repo.mkdir()
+    for cmd in (
+        ("git", "init", "-q", "-b", "main"),
+        ("git", "config", "user.email", "t@test.local"),
+        ("git", "config", "user.name", "T"),
+    ):
+        subprocess.run(cmd, cwd=str(repo), check=True, capture_output=True)
+    (repo / "README.md").write_text("x")
+    subprocess.run(("git", "add", "-A"), cwd=str(repo), check=True, capture_output=True)
+    subprocess.run(("git", "commit", "-qm", "init"), cwd=str(repo), check=True, capture_output=True)
+
+    sandbox = GitSandbox(repo, sandbox_root=tmp_path / "worktrees")
+    trial = sandbox.create("dacode-task-r1-1-v2")
+    assert trial.exists()
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "dacode.cli", "--repo", str(repo), "--sandbox-root", str(tmp_path / "worktrees"),
+         "sandbox", "clean"],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "DACODE_RUNLOG": "off"},
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert repo.exists() and (repo / "README.md").exists(), "the main checkout must survive"
+    assert not trial.exists(), "the trial worktree should be cleaned"

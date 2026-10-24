@@ -204,3 +204,48 @@ def test_the_gate_never_gets_the_network_even_when_the_executor_does(rig_repo):
     from dacode.sandbox.bwrap import allowed_env
 
     assert "OPENROUTER_API_KEY" not in allowed_env(rig.critic.isolation, {"OPENROUTER_API_KEY": "x"})
+
+
+# --- audit regressions -----------------------------------------------------
+
+@needs_bwrap
+def test_a_workspace_under_tmp_still_works(tmp_path):
+    """Audit H1: --tmpfs /tmp came after the workspace bind and broke /tmp checkouts."""
+    ws = Path("/tmp") / f"dacode-ws-{tmp_path.name}"
+    ws.mkdir(parents=True, exist_ok=True)
+    try:
+        argv = wrap_command(
+            ["bash", "-c", "echo ok; echo TMPDIR=$TMPDIR"],
+            workspace=ws,
+            policy=IsolationPolicy(enabled=True),
+        )
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stderr
+        assert "TMPDIR=/tmp" in proc.stdout
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+
+
+def test_binding_home_or_its_ancestor_is_refused(tmp_path):
+    """Audit C5a: a symlink two levels under $HOME used to re-mount the whole home."""
+    from dacode.sandbox.bwrap import _bind_candidates
+
+    home = Path.home().resolve()
+    assert _bind_candidates(home) == []
+    assert _bind_candidates(home.parent) == []
+    keepable = tmp_path / "venv"
+    keepable.mkdir()
+    assert _bind_candidates(keepable) == [keepable]
+
+
+def test_unknown_isolate_values_are_rejected(rig_repo):
+    from dacode.config import DaCodeConfig
+    from dacode.orchestrator import DaCodeRig
+
+    rig = DaCodeRig.__new__(DaCodeRig)
+    rig.config = DaCodeConfig(repo=rig_repo, isolate="false")
+    assert DaCodeRig._isolation_policy(rig) is None
+
+    rig.config = DaCodeConfig(repo=rig_repo, isolate="sandcastle")
+    with pytest.raises(RuntimeError, match="unknown --isolate value"):
+        DaCodeRig._isolation_policy(rig)
