@@ -50,13 +50,17 @@ class DaCodeRig:
         self.llm = llm or build_llm(config.llm_kind, model=config.model, base_url=config.base_url)
         self.sandbox = sandbox or GitSandbox(config.repo, config.sandbox_root)
         self.isolation = self._isolation_policy()
+        # The gate gets its own policy: an agent needs the network to reach a model,
+        # a test suite never does. Sharing one object gave the gate sockets (and the
+        # provider keys that come with them) whenever --isolate-network was on.
+        self.gate_isolation = self._gate_isolation()
         self.executor = executor or self._build_executor()
         self.judge = build_judge(config.judge)
         self.critic = critic or PstackCritic(
             test_command=config.test_command,
             test_glob=config.test_glob,
             timeout=config.variant_timeout,
-            isolation=self.isolation,
+            isolation=self.gate_isolation,
         )
         self.memory = memory
         if self.memory is None and config.vault is not None and Path(config.vault).is_dir():
@@ -90,6 +94,12 @@ class DaCodeRig:
             isolation=self.isolation,
         )
 
+    def _gate_isolation(self) -> IsolationPolicy | None:
+        """Isolation for the test gate: always offline, always key-free."""
+        if self.isolation is None:
+            return None
+        return IsolationPolicy(enabled=True, network=False, read_only_paths=(), env_allow=())
+
     def _isolation_policy(self) -> IsolationPolicy | None:
         """Turn `--isolate` into a policy, refusing to pretend when bwrap is missing.
 
@@ -113,8 +123,12 @@ class DaCodeRig:
 
     def layers(self) -> list[LayerStatus]:
         report = [
-            LayerStatus("5b. Isolation", describe_isolation(self.isolation) if self.isolation else "off",
-                        self.isolation is None or bwrap_available()),
+            LayerStatus(
+                "5b. Isolation",
+                (describe_isolation(self.isolation) if self.isolation else "off")
+                + ("" if self.isolation is None else " · gate: net:off"),
+                self.isolation is None or bwrap_available(),
+            ),
         ]
         return [
             LayerStatus(

@@ -187,3 +187,20 @@ def test_the_gate_can_run_a_real_suite_inside_the_sandbox(tmp_path):
     report = critic.review_workspace(tmp_path)
     assert report.exit_code == 0, report.findings
     assert (report.tests_total, report.tests_passed) == (1, 1)
+
+
+def test_the_gate_never_gets_the_network_even_when_the_executor_does(rig_repo):
+    """Found by an external audit: one shared policy gave the gate sockets + keys."""
+    from dacode.config import DaCodeConfig
+    from dacode.orchestrator import DaCodeRig
+
+    cfg = DaCodeConfig(repo=rig_repo, isolate="bwrap", isolate_network=True)
+    rig = DaCodeRig(cfg)
+
+    assert rig.isolation is not None and rig.isolation.network is True
+    assert rig.critic.isolation is not None
+    assert rig.critic.isolation.network is False
+    # and the environment the gate sees carries no provider keys
+    from dacode.sandbox.bwrap import allowed_env
+
+    assert "OPENROUTER_API_KEY" not in allowed_env(rig.critic.isolation, {"OPENROUTER_API_KEY": "x"})

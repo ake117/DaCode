@@ -26,7 +26,7 @@ not about the code in general.
 ## Running the rig here
 
 ```bash
-.venv/bin/python -m pytest -q -o addopts=     # the suite: 180 tests
+.venv/bin/python -m pytest -q -o addopts=     # the full suite (no test count: it drifts)
 ```
 
 `-o addopts=` is required because `pyproject.toml` sets `addopts = "-q"`.
