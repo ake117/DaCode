@@ -221,6 +221,10 @@ kept so you can inspect the diff.
 
 ---
 
+Security posture (what is guaranteed, what is still open) lives in
+[`SECURITY.md`](SECURITY.md). Read it before pointing the rig at a repository you
+do not own.
+
 ## Isolation
 
 A worktree gives a trial a private branch, not a private machine. `--isolate bwrap`
