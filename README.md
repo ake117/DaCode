@@ -294,6 +294,14 @@ dacode state stats            # counts, avg_variant_s, slowest_variant_s, skippe
 dacode retro --days 14        # what to change next: pass rate, rounds, slow variants, tampering
 ```
 
+## Working on DaCode itself
+
+- `AGENTS.md` — the tool-agnostic playbook for any agent editing this repo (gate
+  ownership, contract-first tests, one module per run, conventions).
+- `.dacode.md` — the canonical gate command for running the rig *on this repo*:
+  `${VIRTUAL_ENV}/bin/python` (trial worktrees have no `.venv`), `-o addopts=`
+  (the project's own `-q` would suppress the summary), one module per run.
+
 ## Status / roadmap
 
 - [x] Layer 1 Vault Memory (keyword retrieval + ingestion)
