@@ -116,6 +116,33 @@ class PstackCritic:
         except subprocess.TimeoutExpired as exc:
             return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0
         total, failed, skipped = _parse_test_counts(proc.stdout)
+        if total == 0 and proc.returncode == 0:
+            # A green run with no summary usually means the project's own addopts
+            # already contain -q ("-qq" prints nothing). Re-run with the project
+            # addopts neutralised so the gate can count what actually ran.
+            retried = self._neutralised_run(workspace)
+            if retried is not None:
+                return retried
+        return proc.returncode, proc.stdout, proc.stderr, total, failed, skipped
+
+    def _neutralised_run(self, workspace: Path) -> tuple[int, str, str, int, int, int] | None:
+        """Re-run with ``-o addopts=`` so a quiet project config cannot look like 0 tests."""
+        if not self.test_command:
+            return None
+        cmd = [*self.test_command, "-o", "addopts="]
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        total, failed, skipped = _parse_test_counts(proc.stdout)
+        if total == 0:
+            return None
         return proc.returncode, proc.stdout, proc.stderr, total, failed, skipped
 
     def _check_test_integrity(self, workspace: Path) -> list[Finding]:

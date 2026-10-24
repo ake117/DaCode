@@ -20,6 +20,7 @@ class HarnessVariant:
     parent_id: str | None = None
     label: str = ""
     payload: dict = field(default_factory=dict)
+    model: str | None = None  # executor model for this variant (fleet diversity)
     id: str = field(default_factory=lambda: f"v{next(_counter)}")
 
     # filled in after probing

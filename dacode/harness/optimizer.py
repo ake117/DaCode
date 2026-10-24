@@ -76,6 +76,7 @@ class HarnessOptimizer:
         escalation_models: list[str] | None = None,
         baseline: tuple[int, int] | None = None,
         parallel: int = 1,
+        fleet: list[str] | None = None,
     ) -> None:
         self.llm = llm
         self.sandbox = sandbox
@@ -91,6 +92,10 @@ class HarnessOptimizer:
         # (total, skipped) measured on the untouched repo; None disables the guard
         self.baseline = baseline
         self.parallel = max(1, parallel)
+        # Fleet diversity: one round probes different model families at once, so a
+        # spec that only one model's habits can satisfy does not look "solved".
+        self.fleet = [m for m in (fleet or []) if m]
+        self._used_models: set[str] = set()
         self._sandbox_lock = threading.Lock()
 
     # -- propose -----------------------------------------------------------
@@ -164,7 +169,7 @@ class HarnessOptimizer:
                 stderr=exec_result.stderr[-2000:],
                 elapsed_s=round(time.perf_counter() - started, 3),
                 tests_skipped=getattr(report, "tests_skipped", 0),
-                model=getattr(self.executor, "model", None),
+                model=variant.model or getattr(self.executor, "model", None),
             )
         except Exception as exc:  # noqa: BLE001 - a failed trial must not kill the run
             result = ProbeResult(
@@ -175,7 +180,7 @@ class HarnessOptimizer:
                 critique_score=0.0,
                 stderr=f"trial error: {exc!r}",
                 elapsed_s=round(time.perf_counter() - started, 3),
-                model=getattr(self.executor, "model", None),
+                model=variant.model or getattr(self.executor, "model", None),
             )
         variant.score = _variant_score(result)
         variant.probe = result
@@ -195,6 +200,30 @@ class HarnessOptimizer:
             "findings": [f"{f.severity}:{f.check}" for f in getattr(report, "findings", [])],
         })
         return result
+
+    def _assign_fleet(self, variants: list[HarnessVariant], round_no: int) -> None:
+        """Give each variant in a round a different model from the fleet."""
+        if not self.fleet:
+            return
+        offset = round_no - 1
+        for idx, variant in enumerate(variants):
+            if variant.model:
+                continue
+            variant.model = self.fleet[(offset + idx) % len(self.fleet)]
+
+    def next_fleet_model(self) -> str | None:
+        """Pick a model whose family has not been tried yet.
+
+        Repeating a family that already failed is how a rig wastes budget, so
+        prefer an untried family, then any fleet member, then the legacy ladder.
+        """
+        used_families = {_family(model) for model in self._used_models}
+        for model in self.fleet:
+            if _family(model) not in used_families:
+                return model
+        if self.fleet:
+            return self.fleet[0]
+        return None
 
     def probe_round(self, task: str, variants: list[HarnessVariant], round_no: int) -> None:
         """Probe every variant of a round, in parallel when allowed.
@@ -336,6 +365,10 @@ class HarnessOptimizer:
                 reprobe = None
             else:
                 variants = self.propose(task, best, self.variants_per_round)
+            self._assign_fleet(variants, round_no)
+            for variant in variants:
+                if variant.model:
+                    self._used_models.add(variant.model)
             self.probe_round(task, variants, round_no)
             for variant in variants:
                 if variant.id not in seen:
@@ -353,14 +386,15 @@ class HarnessOptimizer:
 
             action = "new_proposal"
             if self.judge is not None:
-                action = self._triage(task, round_no, best, variants, can_escalate=bool(ladder))
+                action = self._triage(task, round_no, best, variants, can_escalate=bool(ladder) or bool(self.fleet))
             if action == "human_review":
                 needs_human_review = True
                 break
-            if action == "escalate_model" and ladder:
-                model = ladder.pop(0)
-                if hasattr(self.executor, "model"):
+            if action == "escalate_model":
+                model = self.next_fleet_model() or (ladder.pop(0) if ladder else None)
+                if model and hasattr(self.executor, "model"):
                     self.executor.model = model
+                    self._used_models.add(model)
             if action == "retry_same":
                 reprobe = list(variants)
 
@@ -373,6 +407,7 @@ class HarnessOptimizer:
             "needs_human_review": needs_human_review,
             "best_id": best.id,
             "best_score": best.score,
+            "models": sorted({v.model for v in all_variants if v.model}),
         })
         return HarnessResult(
             task=task,
@@ -474,6 +509,12 @@ def _variant_score(result: ProbeResult) -> float:
     bonus = 0.5 if result.critique_passed else 0.0
     exit_penalty = 0.0 if result.exit_code == 0 else 0.25
     return round(max(0.0, min(1.0, base + bonus - exit_penalty)), 3)
+
+
+def _family(model: str) -> str:
+    """``anthropic/claude-sonnet-4`` and ``claude-sonnet-4`` share a family."""
+    head = model.split("/")[0] if "/" in model else model
+    return head.split("-")[0].lower()
 
 
 def _slug(text: str) -> str:

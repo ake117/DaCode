@@ -107,3 +107,29 @@ def test_warnings_are_not_counted_as_failures(tmp_path):
     ])
     report = retro.build_report(since_days=7, log_path=log)
     assert report.tasks[0].failure_checks == {}
+
+
+def test_per_model_pass_rate_is_counted(tmp_path):
+    log = _write_log(tmp_path / "runlog.jsonl", [
+        {"type": "run", "task": "fleet task", "rounds": 2, "passed": False},
+        {"type": "probe", "task": "fleet task", "elapsed_s": 5.0, "model": "deepseek/x", "critique_passed": True},
+        {"type": "probe", "task": "fleet task", "elapsed_s": 5.0, "model": "deepseek/x", "critique_passed": True},
+        {"type": "probe", "task": "fleet task", "elapsed_s": 5.0, "model": "anthropic/y", "critique_passed": False},
+    ])
+    report = retro.build_report(since_days=7, log_path=log)
+    task = report.tasks[0]
+    assert task.models == {"deepseek/x": 2, "anthropic/y": 1}
+    assert task.model_passes == {"deepseek/x": 2}
+    assert any("2 models probed" in tip for tip in report.suggestions)
+    assert "deepseek/x" in retro.render_text(report)
+
+
+def test_a_model_that_never_passes_is_recommended_for_removal(tmp_path):
+    log = _write_log(tmp_path / "runlog.jsonl", [
+        {"type": "run", "task": "hard task", "rounds": 3, "passed": False},
+    ] + [
+        {"type": "probe", "task": "hard task", "elapsed_s": 5.0, "model": "anthropic/y", "critique_passed": False}
+        for _ in range(3)
+    ])
+    report = retro.build_report(since_days=7, log_path=log)
+    assert any("0/3" in tip and "drop it from the fleet" in tip for tip in report.suggestions)

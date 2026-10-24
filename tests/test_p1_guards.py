@@ -151,3 +151,17 @@ def test_parallel_probing_still_records_every_variant(tmp_path):
     opt.probe_round("task", variants, round_no=1)
     assert [v.probe.critique_passed for v in variants] == [True, True]
     assert sorted(v.score for v in variants) == [1.0, 1.0]
+
+
+def test_a_quiet_project_config_does_not_look_like_zero_tests(tmp_path):
+    """`addopts = "-q"` plus our `-q` prints no summary; the gate must still count."""
+    ws = _workspace(tmp_path, tests={"test_a.py": GREEN})
+    (ws / "pytest.ini").write_text("[pytest]\naddopts = -q\n")
+    critic = PstackCritic(
+        test_command=(sys.executable, "-m", "pytest", "-q"),
+        test_glob="test_*.py",
+    )
+    report = critic.review_workspace(ws)
+    assert report.tests_total == 1
+    assert report.tests_passed == 1
+    assert report.passed is True

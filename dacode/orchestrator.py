@@ -68,6 +68,7 @@ class DaCodeRig:
             escalation_models=config.escalate_models,
             baseline=config.baseline,
             parallel=config.parallel,
+            fleet=config.fleet,
             budget=config.budget,
             variants_per_round=config.variants_per_round,
             keep_winning_worktree=config.keep_winning_worktree,

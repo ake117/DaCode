@@ -67,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="seconds a single variant may spend executing (default: 900)",
     )
     run.add_argument(
+        "--fleet",
+        default=None,
+        help="comma-separated models probed side by side, e.g. "
+        "'deepseek/deepseek-v4.1-flash,anthropic/claude-sonnet-4'",
+    )
+    run.add_argument(
         "--parallel",
         type=int,
         default=None,
@@ -160,6 +166,8 @@ def _make_config(args) -> DaCodeConfig:
         cfg.test_glob = args.test_glob
     if getattr(args, "variant_timeout", None) is not None:
         cfg.variant_timeout = args.variant_timeout
+    if getattr(args, "fleet", None):
+        cfg.fleet = [m.strip() for m in args.fleet.split(",") if m.strip()]
     if getattr(args, "parallel", None) is not None:
         cfg.parallel = max(1, args.parallel)
     if getattr(args, "keep_worktree", False):

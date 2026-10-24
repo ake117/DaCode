@@ -247,6 +247,23 @@ Built to the pstack rules:
 
 ---
 
+### Fleet diversity
+
+A round can probe several model families at once — a spec that only one model's
+habits satisfy then stops looking solved:
+
+```bash
+dacode run "make tests/test_x.py pass" \
+  --executor pi --llm openrouter \
+  --fleet "deepseek/deepseek-v4.1-flash,anthropic/claude-sonnet-5.5" \
+  --parallel 2 --variants 2
+```
+
+Round 1 runs variant 1 on the first model and variant 2 on the second; later
+rounds rotate. When triage decides to escalate, it prefers a family that has not
+failed yet instead of repeating the one that just did. `dacode retro` then reports
+each model's pass rate and suggests dropping a model that keeps losing.
+
 ### Reading the ledger
 
 ```bash

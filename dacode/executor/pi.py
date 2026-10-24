@@ -45,8 +45,9 @@ class PiExecutor:
 
     def build_command(self, variant: "HarnessVariant", task: str) -> list[str]:
         cmd = [self.binary, "--print", "--mode", "text"]
-        if self.provider and self.model:
-            cmd += ["--provider", self.provider, "--model", self.model]
+        model = variant.model or self.model
+        if self.provider and model:
+            cmd += ["--provider", self.provider, "--model", model]
         if variant.system_prompt:
             cmd += ["--system-prompt", variant.system_prompt]
         for snippet in variant.memory_snippets:

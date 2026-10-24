@@ -35,6 +35,7 @@ class TaskRetro:
     variant_times: list[float] = field(default_factory=list)
     failure_checks: dict[str, int] = field(default_factory=dict)
     models: dict[str, int] = field(default_factory=dict)
+    model_passes: dict[str, int] = field(default_factory=dict)
     timeouts: int = 0
 
     @property
@@ -75,6 +76,7 @@ class RetroReport:
                     "slowest_variant_s": round(t.slowest_variant_s, 1),
                     "failure_checks": t.failure_checks,
                     "models": t.models,
+                    "model_passes": t.model_passes,
                     "timeouts": t.timeouts,
                 }
                 for t in self.tasks
@@ -140,7 +142,10 @@ def build_report(
                     continue
                 row.failure_checks[check] = row.failure_checks.get(check, 0) + 1
             if event.get("model"):
-                row.models[str(event["model"])] = row.models.get(str(event["model"]), 0) + 1
+                model = str(event["model"])
+                row.models[model] = row.models.get(model, 0) + 1
+                if event.get("critique_passed"):
+                    row.model_passes[model] = row.model_passes.get(model, 0) + 1
             if event.get("exit_code") == 124:
                 row.timeouts += 1
 
@@ -181,7 +186,14 @@ def _suggest(tasks: list[TaskRetro]) -> list[str]:
                 "check whether the prompt invites 'fixing' the suite."
             )
         if len(t.models) > 1:
-            tips.append(f"`{label}`: escalation touched {', '.join(sorted(t.models))} — model ladder is working.")
+            tips.append(f"`{label}`: {len(t.models)} models probed — fleet/ladder is active.")
+        for model, probes in sorted(t.models.items()):
+            passes = t.model_passes.get(model, 0)
+            if probes >= 3 and passes == 0:
+                tips.append(
+                    f"`{label}`: {model} went 0/{probes} — drop it from the fleet for this "
+                    "kind of task or give it a smaller contract."
+                )
     if not tips:
         tips.append("Nothing stands out: no low pass rates, no slow variants, no test tampering.")
     return tips
@@ -199,6 +211,13 @@ def render_text(report: RetroReport) -> str:
             f"  {t.runs:>4} {t.pass_rate:>5.0%} {t.avg_rounds:>6.1f} "
             f"{t.avg_variant_s:>7.0f} {t.slowest_variant_s:>7.0f}  {label}"
         )
+    if any(len(t.models) > 1 for t in report.tasks):
+        lines.append("\nBy model:")
+        for t in report.tasks:
+            for model, probes in sorted(t.models.items()):
+                lines.append(
+                    f"  {model:<44} {t.model_passes.get(model, 0):>2}/{probes:<2} pass"
+                )
     lines.append("\nSuggestions:")
     for tip in report.suggestions:
         lines.append(f"  - {tip}")
