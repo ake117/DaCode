@@ -132,7 +132,12 @@ def build_report(
         elif kind == "probe":
             if isinstance(event.get("elapsed_s"), (int, float)):
                 row.variant_times.append(float(event["elapsed_s"]))
-            for check in event.get("findings") or []:
+            for item in event.get("findings") or []:
+                severity, _, check = str(item).partition(":")
+                if not check:            # older events recorded a bare check name
+                    severity, check = "error", severity
+                if severity != "error":  # style warnings are not failures
+                    continue
                 row.failure_checks[check] = row.failure_checks.get(check, 0) + 1
             if event.get("model"):
                 row.models[str(event["model"])] = row.models.get(str(event["model"]), 0) + 1

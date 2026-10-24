@@ -57,7 +57,7 @@ def test_slow_variants_suggest_timeout_and_parallel(tmp_path):
 def test_test_tampering_is_called_out(tmp_path):
     log = _write_log(tmp_path / "runlog.jsonl", [
         {"type": "run", "task": "cheat", "rounds": 1, "passed": True},
-        {"type": "probe", "task": "cheat", "elapsed_s": 5.0, "findings": ["tests_skipped"]},
+        {"type": "probe", "task": "cheat", "elapsed_s": 5.0, "findings": ["error:tests_skipped"]},
     ])
     report = retro.build_report(since_days=7, log_path=log)
     assert any("deleted or skipped tests" in tip for tip in report.suggestions)
@@ -97,3 +97,13 @@ def test_render_text_includes_a_row_and_the_suggestions(tmp_path):
     text = retro.render_text(retro.build_report(since_days=7, log_path=log))
     assert "render me" in text
     assert "Suggestions:" in text
+
+
+def test_warnings_are_not_counted_as_failures(tmp_path):
+    log = _write_log(tmp_path / "runlog.jsonl", [
+        {"type": "run", "task": "warny", "rounds": 1, "passed": True},
+        {"type": "probe", "task": "warny", "elapsed_s": 3.0,
+         "findings": ["warning:none_check", "warning:weak_truthiness"]},
+    ])
+    report = retro.build_report(since_days=7, log_path=log)
+    assert report.tasks[0].failure_checks == {}
