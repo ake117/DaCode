@@ -24,6 +24,11 @@ def default_path() -> Path:
     return Path("~/.local/state/dacode/runlog.jsonl").expanduser()
 
 
+def current_path() -> Path:
+    """The log in force right now (``DACODE_RUNLOG`` wins, else the default)."""
+    return _path() or default_path()
+
+
 def _path() -> Path | None:
     raw = os.environ.get("DACODE_RUNLOG")
     if raw is not None:

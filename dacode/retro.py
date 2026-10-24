@@ -86,7 +86,7 @@ class RetroReport:
 
 
 def _events(log_path: Path | None, since_days: int) -> list[dict]:
-    path = Path(log_path) if log_path else runlog.default_path()
+    path = Path(log_path) if log_path else runlog.current_path()
     if not path.exists():
         return []
     cutoff = time.time() - since_days * 86400

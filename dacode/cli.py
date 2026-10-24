@@ -91,6 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
         "(unset = off)",
     )
 
+    mcp = sub.add_parser("mcp", help="serve memory + run history over MCP (stdio)")
+    mcp.add_argument(
+        "--keyword-only",
+        action="store_true",
+        help="skip the semantic index (no embedding calls; keyword scoring only)",
+    )
+
     retro = sub.add_parser("retro", help="read the runlog and suggest harness changes")
     retro.add_argument("--days", type=int, default=14, help="look back this many days (default: 14)")
     retro.add_argument("--task", default=None, help="filter by task substring")
@@ -227,6 +234,17 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         judge = JevJudge(model=args.model) if args.model else JevJudge()
         print(summarize(evaluate(cases, judge, limit=args.limit)))
+        return 0
+
+    if args.command == "mcp":
+        from dacode.mcp import MemoryServer
+
+        cfg = _make_config(args)
+        if not cfg.vault:
+            print("error: no vault configured; pass --vault PATH", file=sys.stderr)
+            return 2
+        server = MemoryServer(vault=cfg.vault, semantic=False if args.keyword_only else "auto")
+        server.serve()
         return 0
 
     if args.command == "retro":

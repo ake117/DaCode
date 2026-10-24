@@ -264,6 +264,29 @@ rounds rotate. When triage decides to escalate, it prefers a family that has not
 failed yet instead of repeating the one that just did. `dacode retro` then reports
 each model's pass rate and suggests dropping a model that keeps losing.
 
+### MCP server — share the memory with other agents
+
+`dacode mcp` serves the lessons and the run store over MCP (stdio JSON-RPC,
+stdlib only, no extra dependency):
+
+```bash
+dacode --vault ~/Documents/ake_obsidian mcp            # semantic search if an embedder is configured
+dacode --vault ~/Documents/ake_obsidian mcp --keyword-only   # no network calls
+```
+
+Tools: `memory_search` (lessons), `run_history` (FTS over past runs), `failures`,
+`stats`, `retro`. Register it with any MCP client, e.g. Hermes:
+
+```yaml
+mcp_servers:
+  dacode-memory:
+    command: /path/to/DaCode/.venv/bin/python
+    args: [-m, dacode.cli, --vault, /path/to/vault, mcp, --keyword-only]
+    enabled: true
+```
+
+Then `hermes mcp test dacode-memory` should report 5 tools.
+
 ### Reading the ledger
 
 ```bash
