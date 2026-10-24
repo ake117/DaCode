@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -102,9 +103,49 @@ class PstackCritic:
         total, failed = _parse_test_summary(proc.stdout)
         return proc.returncode, proc.stdout, proc.stderr, total, failed
 
+    def _check_test_integrity(self, workspace: Path) -> list[Finding]:
+        """A trial may not edit, add or delete a test file.
+
+        The gate's ground truth is the test suite it was handed. A trial that
+        rewrites an assertion can turn a red gate green without changing
+        behaviour — that is a false PASS, and it happened once (a trial changed
+        ``approx(100.0)`` to ``approx(105.0)``). Only git workspaces can be
+        checked; elsewhere this is a no-op.
+        """
+        try:
+            proc = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if proc.returncode != 0:
+            return []  # not a git workspace in this trial
+
+        findings: list[Finding] = []
+        for line in proc.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:].strip().strip('"')
+            name = Path(path).name
+            if fnmatch.fnmatch(name, self.test_glob):
+                findings.append(
+                    Finding(
+                        check="tests_modified",
+                        severity="error",
+                        message=f"trial modified a test file ({path}) — the gate must judge unedited tests",
+                        location=str(workspace / path),
+                    )
+                )
+        return findings
+
     def review_workspace(self, workspace: str | Path) -> CritiqueReport:
         workspace = Path(workspace)
         findings, _files = self._scan_tests(workspace)
+        findings.extend(self._check_test_integrity(workspace))
         exit_code, stdout, stderr, total, failed = self._run_tests(workspace)
         passed_count = max(0, total - failed)
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -140,3 +142,47 @@ def test_critic_fails_when_custom_command_reports_failures(tmp_path):
     assert report.tests_total == 12
     assert report.tests_failed == 3
     assert report.passed is False
+
+
+def _git_workspace(tmp_path):
+    """A tiny git repo with one committed test file."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    _write(tmp_path, "test_ok.py", "def test_add():\n    assert 1 + 1 == 2\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+    return tmp_path
+
+
+def test_critic_rejects_a_trial_that_edits_a_test(tmp_path):
+    from dacode.discipline.critic import PstackCritic
+
+    workspace = _git_workspace(tmp_path)
+    # the trial "fixes" the assertion instead of the code
+    _write(workspace, "test_ok.py", "def test_add():\n    assert 1 + 1 == 3\n")
+
+    report = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q")).review_workspace(workspace)
+
+    checks = {f.check for f in report.findings}
+    assert "tests_modified" in checks
+    assert report.passed is False
+
+
+def test_critic_allows_a_trial_that_only_edits_source(tmp_path):
+    from dacode.discipline.critic import PstackCritic
+
+    workspace = _git_workspace(tmp_path)
+    _write(workspace, "add.py", "def add(a, b):\n    return a + b\n")
+
+    report = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q")).review_workspace(workspace)
+    assert "tests_modified" not in {f.check for f in report.findings}
+    assert report.passed is True
+
+
+def test_critic_ignores_a_non_git_workspace(tmp_path):
+    from dacode.discipline.critic import PstackCritic
+
+    _write(tmp_path, "test_ok.py", "def test_add():\n    assert 1 + 1 == 2\n")
+    report = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q")).review_workspace(tmp_path)
+    assert "tests_modified" not in {f.check for f in report.findings}
