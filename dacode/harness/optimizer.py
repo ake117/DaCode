@@ -140,6 +140,14 @@ class HarnessOptimizer:
 
     # -- probe -------------------------------------------------------------
 
+    def _trial_nonce(self) -> str:
+        """A per-process stamp so two runs of one task do not collide."""
+        nonce = getattr(self, "_run_nonce", None)
+        if not nonce:
+            nonce = f"{int(time.time()) % 0x100000:05x}"
+            self._run_nonce = nonce
+        return nonce
+
     def probe(self, variant: HarnessVariant, task: str, trial_id: str) -> ProbeResult:
         """Run one variant end-to-end in a fresh isolated worktree."""
         variant.payload.setdefault("task", task)
@@ -260,7 +268,11 @@ class HarnessOptimizer:
         """
         jobs = []
         for idx, variant in enumerate(variants, start=1):
-            trial_id = f"{_slug(task)}-r{round_no}-{idx}-{variant.id}"
+            # A per-run nonce keeps a re-run of the same task from colliding with the
+            # worktree the previous run kept (audit H6a: SandboxError, run crashed).
+            trial_id = (
+                f"{_slug(task)}-{self._trial_nonce()}-r{round_no}-{idx}-{variant.id}"
+            )
             variant.payload.setdefault("task", task)
             jobs.append((variant, trial_id))
 
@@ -379,6 +391,7 @@ class HarnessOptimizer:
         """
         if base is None:
             base = HarnessVariant(system_prompt=self.base_prompt, label="base")
+        self._run_nonce = self._trial_nonce()
 
         run_started = time.perf_counter()
         all_variants: list[HarnessVariant] = []
