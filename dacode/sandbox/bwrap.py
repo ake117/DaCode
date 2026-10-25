@@ -72,6 +72,8 @@ class IsolationPolicy:
     #: Files replaced by /dev/null inside the sandbox (a repository's own .env, an
     #: agent's auth file): readable parent, invisible file.
     hidden_files: tuple[Path, ...] = field(default_factory=tuple)
+    #: Extra directories bound read-write (the gate's JUnit report directory).
+    writable_paths: tuple[Path, ...] = field(default_factory=tuple)
 
     def with_paths(self, *paths: str | Path | None) -> "IsolationPolicy":
         """Return a copy with more read-only bindings (None entries are ignored)."""
@@ -86,6 +88,7 @@ class IsolationPolicy:
             read_only_paths=tuple(merged),
             env_allow=self.env_allow,
             hidden_files=self.hidden_files,
+            writable_paths=self.writable_paths,
         )
 
 
@@ -206,7 +209,12 @@ def wrap_command(
         if target.exists() and not target.is_dir():
             argv += ["--ro-bind", "/dev/null", str(target.resolve())]
 
-    # The trial workspace is the only writable place that survives the run.
+    # The trial workspace is the only writable place that survives the run, plus
+    # the gate's own report directory (which the trial cannot reach).
+    for extra in policy.writable_paths:
+        target = Path(extra).expanduser().resolve()
+        if target.is_dir():
+            argv += ["--bind", str(target), str(target)]
     argv += ["--bind", str(workspace_path), str(workspace_path)]
     argv += ["--chdir", str(workspace_path)]
 

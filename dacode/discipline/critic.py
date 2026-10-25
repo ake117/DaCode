@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import fnmatch
 import subprocess
+import tempfile
+import xml.etree.ElementTree as xml
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 
 from dacode.discipline.checks import Finding, check_python_test
@@ -102,6 +104,37 @@ class PstackCritic:
             findings.extend(found)
         return findings, count
 
+    def _static_test_count(self, repo: Path) -> int:
+        """Count `def test_*` functions by reading the files.
+
+        A contract-first suite that imports a module which does not exist yet fails
+        at collection, so the dynamic count is 1 error (or nothing) and the baseline
+        would silently switch the lost/added-test guards off. The static count does
+        not care whether the code runs (audit H1).
+        """
+        import ast
+
+        from dacode.discipline.checks import _TestVisitor
+
+        total = 0
+        for path in Path(repo).rglob("*.py"):
+            try:
+                relative = path.relative_to(repo)
+            except ValueError:
+                continue
+            if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in relative.parts):
+                continue
+            if not fnmatch.fnmatch(path.name, self.test_glob):
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+            except (OSError, SyntaxError):
+                continue
+            visitor = _TestVisitor(str(relative))
+            visitor.visit(tree)
+            total += len(visitor.test_functions)
+        return total
+
     def measure_baseline(self, repo: Path) -> tuple[int, int] | None:
         """Count (total, skipped) on the untouched repo, once per run.
 
@@ -109,22 +142,28 @@ class PstackCritic:
         green without proving anything; the baseline is what makes that visible.
         """
         try:
-            exit_code, stdout, _stderr, total, _failed, skipped = self._run_tests(Path(repo))
+            _exit, _out, _err, total, _failed, skipped, _note = self._run_tests(Path(repo))
         except Exception:  # noqa: BLE001 - a missing baseline must never block a run
             return None
-        if total <= 0:
+        static = self._static_test_count(Path(repo))
+        if total <= 0 and static <= 0:
             return None
-        return (total, skipped)
+        # A collection error under-counts; trust whichever number is higher so the
+        # guards never switch themselves off by accident.
+        return (max(total, static), skipped)
 
-    def _wrap(self, cmd: list[str], workspace: Path) -> list[str]:
+    def _wrap(
+        self, cmd: list[str], workspace: Path, *, policy=None
+    ) -> list[str]:
         """Run the gate under bwrap when isolation is on.
 
         A suite is model-written code too: it must not reach the network, the
         user's home, or anything outside its own worktree.
         """
-        if self.isolation is None or not self.isolation.enabled:
+        active = policy if policy is not None else self.isolation
+        if active is None or not active.enabled:
             return cmd
-        policy = self.isolation.with_paths(
+        policy = active.with_paths(
             *interpreter_binds(self.test_command),
             os.environ.get("VIRTUAL_ENV"),
         )
@@ -133,10 +172,27 @@ class PstackCritic:
         # _run_tests (exit 125) so the caller sees a verdict, not a traceback.
         return wrap_command(cmd, workspace=workspace, policy=policy)
 
-    def _run_tests(self, workspace: Path) -> tuple[int, str, str, int, int, int]:
+    def _run_once(
+        self, command: Sequence[str], workspace: Path
+    ) -> tuple[int, str, str, int, int, int, str | None]:
+        """One gate run. Counts come from a JUnit report when pytest can write one."""
+        import shutil
+
+        junit_dir: Path | None = None
+        junit: Path | None = None
+        cmd = list(command)
+        policy = self.isolation
+        if _pytest_like(cmd):
+            junit_dir = Path(tempfile.mkdtemp(prefix="dacode-junit-"))
+            junit = junit_dir / "report.xml"
+            cmd = [*cmd, f"--junitxml={junit}"]
+            if policy is not None and policy.enabled:
+                policy = dataclass_replace(
+                    policy, writable_paths=(*policy.writable_paths, junit_dir)
+                )
         try:
             proc = subprocess.run(
-                self._wrap(list(self.test_command), workspace),
+                self._wrap(cmd, workspace, policy=policy),
                 cwd=str(workspace),
                 capture_output=True,
                 text=True,
@@ -144,41 +200,58 @@ class PstackCritic:
                 env=_gate_env(),
             )
         except IsolationUnavailable as exc:
-            return 125, "", f"isolation unavailable: {exc}", 0, 0, 0
+            return 125, "", f"isolation unavailable: {exc}", 0, 0, 0, None
         except FileNotFoundError as exc:
-            return 127, "", f"test command not found: {exc}", 0, 0, 0
+            return 127, "", f"test command not found: {exc}", 0, 0, 0, None
         except subprocess.TimeoutExpired as exc:
-            return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0
-        total, failed, skipped = _parse_test_counts(proc.stdout)
-        if total == 0 and proc.returncode == 0:
-            # A green run with no summary usually means the project's own addopts
-            # already contain -q ("-qq" prints nothing). Re-run with the project
-            # addopts neutralised so the gate can count what actually ran.
+            return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0, None
+        finally:
+            pass
+
+        xml_counts = _junit_counts(junit) if junit is not None else None
+        stdout_counts = _parse_test_counts(proc.stdout)
+        note = None
+        if (
+            xml_counts is not None
+            and xml_counts[0] > 0
+            and stdout_counts[0] > 0        # silence is not a disagreement
+            and xml_counts != stdout_counts
+        ):
+            # The report is written by pytest itself outside the workspace; a
+            # disagreement means something is printing summaries of its own.
+            note = f"counts_disagree:junit={xml_counts} stdout={stdout_counts}"
+        if (
+            junit is not None
+            and proc.returncode == 0
+            and (xml_counts is None or xml_counts[0] == 0)
+        ):
+            # pytest was asked for a report and a "green" run did not produce one:
+            # something ended the process before pytest could write it.
+            note = (note + " " if note else "") + "counts_unavailable:no junit report"
+        counts = xml_counts if (xml_counts and xml_counts[0] > 0) else stdout_counts
+        if junit_dir is not None:
+            shutil.rmtree(junit_dir, ignore_errors=True)
+        return proc.returncode, proc.stdout, proc.stderr, *counts, note
+
+    def _run_tests(self, workspace: Path) -> tuple[int, str, str, int, int, int, str | None]:
+        result = self._run_once(list(self.test_command), workspace)
+        if result[3] == 0 and result[0] == 0:
+            # A green run with no counts usually means the project's own addopts
+            # already contain -q ("-qq" prints nothing). Re-run with them neutralised.
             retried = self._neutralised_run(workspace)
             if retried is not None:
                 return retried
-        return proc.returncode, proc.stdout, proc.stderr, total, failed, skipped
+        return result
 
-    def _neutralised_run(self, workspace: Path) -> tuple[int, str, str, int, int, int] | None:
+    def _neutralised_run(self, workspace: Path) -> tuple[int, str, str, int, int, int, str | None] | None:
         """Re-run with ``-o addopts=`` so a quiet project config cannot look like 0 tests."""
         if not self.test_command:
             return None
         cmd = [*self.test_command, "-o", "addopts="]
-        try:
-            proc = subprocess.run(
-                self._wrap(cmd, workspace),
-                cwd=str(workspace),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                env=_gate_env(),
-            )
-        except (OSError, subprocess.TimeoutExpired):
+        result = self._run_once(cmd, workspace)
+        if result[3] == 0:
             return None
-        total, failed, skipped = _parse_test_counts(proc.stdout)
-        if total == 0:
-            return None
-        return proc.returncode, proc.stdout, proc.stderr, total, failed, skipped
+        return result
 
     def _is_contract_path(self, relative: Path, *, test_dirs: set[str]) -> bool:
         """Is this path part of what decides the gate's answer?
@@ -379,7 +452,31 @@ class PstackCritic:
             findings.extend(self._check_contract(workspace, contract))
         else:
             findings.extend(self._check_test_integrity(workspace))
-        exit_code, stdout, stderr, total, failed, skipped = self._run_tests(workspace)
+        exit_code, stdout, stderr, total, failed, skipped, counts_note = self._run_tests(workspace)
+        if counts_note and "counts_unavailable" in counts_note:
+            findings.append(
+                Finding(
+                    check="counts_unavailable",
+                    severity="error",
+                    message=(
+                        "pytest was asked for a JUnit report and produced none on a green "
+                        f"run — the process was ended early ({counts_note})"
+                    ),
+                    location=str(workspace),
+                )
+            )
+        elif counts_note:
+            findings.append(
+                Finding(
+                    check="counts_disagree",
+                    severity="error",
+                    message=(
+                        "the test runner's own report disagrees with its stdout — "
+                        f"something is printing a summary ({counts_note})"
+                    ),
+                    location=str(workspace),
+                )
+            )
 
         if baseline is not None:
             base_total, base_skipped = baseline
@@ -469,6 +566,34 @@ DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "sitecustomize.py",
     "usercustomize.py",
 )
+
+
+def _pytest_like(command: Sequence[str]) -> bool:
+    """Is this command pytest? Only then can we ask for a JUnit report."""
+    return any("pytest" in str(token) for token in command)
+
+
+def _junit_counts(path: Path) -> tuple[int, int, int] | None:
+    """``(total, failed, skipped)`` from a JUnit XML report, or None.
+
+    The report is written outside the workspace and parsed here on the host, so the
+    numbers cannot be printed by the code under test (audit C3). A suite may split
+    itself across several <testsuite> elements, so the attributes are summed.
+    """
+    try:
+        tree = xml.parse(path)
+    except (OSError, xml.ParseError):
+        return None
+    total = failed = skipped = 0
+    roots = tree.getroot()
+    suites = [roots] if roots.tag == "testsuite" else list(roots.iter("testsuite"))
+    if not suites:
+        return None
+    for suite in suites:
+        total += int(suite.get("tests") or 0)
+        failed += int(suite.get("failures") or 0) + int(suite.get("errors") or 0)
+        skipped += int(suite.get("skipped") or 0)
+    return total, failed, skipped
 
 
 def _gate_env() -> dict[str, str]:

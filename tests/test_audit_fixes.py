@@ -263,3 +263,66 @@ def test_state_and_runlog_files_are_private(tmp_path, monkeypatch):
 
     mode = stat.S_IMODE(os.stat(log.parent).st_mode)
     assert mode == 0o700, oct(mode)
+
+
+def _git_baseline(path):
+    for cmd in (
+        ("git", "init", "-q", "-b", "main"),
+        ("git", "config", "user.email", "t@test.local"),
+        ("git", "config", "user.name", "T"),
+        ("git", "add", "-A"),
+        ("git", "commit", "-qm", "baseline"),
+    ):
+        subprocess.run(cmd, cwd=str(path), check=True, capture_output=True)
+
+
+def test_a_source_module_that_ends_the_run_cannot_fake_a_green_gate(tmp_path):
+    """Audit C3: '999 passed' + os._exit(0) from application code, no XML report."""
+    (tmp_path / "app.py").write_text(
+        "import atexit\nimport os\n\n\n"
+        "def _bye():\n"
+        '    print("999 passed in 0.01s", flush=True)\n'
+        "    os._exit(0)\n\n\n"
+        "atexit.register(_bye)\n"
+    )
+    (tmp_path / "test_app.py").write_text(
+        "import app\n\n\ndef test_a():\n    assert 1 + 1 == 2\n"
+    )
+    _git_baseline(tmp_path)
+
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    report = critic.review_workspace(tmp_path)
+
+    assert report.passed is False
+    # the JUnit report is authoritative; stdout claiming 999 is a disagreement
+    checks = {f.check for f in report.findings}
+    assert checks & {"counts_disagree", "counts_unavailable"}
+    assert report.tests_total == 1
+
+
+def test_a_normal_pytest_run_produces_a_report_and_passes(tmp_path):
+    (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert 1 + 1 == 2\n")
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    report = critic.review_workspace(tmp_path)
+    assert report.passed is True
+    assert (report.tests_total, report.tests_failed) == (1, 0)
+
+
+def test_a_non_pytest_command_does_not_need_a_report(tmp_path):
+    (tmp_path / "check.sh").write_text("echo done\n")
+    critic = PstackCritic(test_command=("/bin/echo", "3 passed in 0.1s"))
+    report = critic.review_workspace(tmp_path)
+    assert "counts_unavailable" not in {f.check for f in report.findings}
+
+
+def test_the_baseline_survives_a_collection_error(tmp_path):
+    """Audit H1: a contract-first suite that cannot import yet disabled the guards."""
+    (tmp_path / "test_contract.py").write_text(
+        "from not_yet_written import thing\n\n\n"
+        "def test_one():\n    assert thing() == 1\n\n\n"
+        "def test_two():\n    assert thing() == 2\n"
+    )
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    baseline = critic.measure_baseline(tmp_path)
+    assert baseline is not None
+    assert baseline[0] >= 2
