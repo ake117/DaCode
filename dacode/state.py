@@ -243,14 +243,22 @@ def search(query: str, limit: int = 10) -> list[dict]:
                 (expr, limit),
             ).fetchall()
         else:
-            like = f"%{query}%"
+            like = f"%{query.replace('%', '').replace('_', '')}%"  # no wildcards from input
             rows = con.execute(
-                "SELECT 'row', task, '', '', ts FROM ("
-                "  SELECT task, ts FROM runs WHERE task LIKE ?"
-                "  UNION ALL SELECT task, ts FROM variants WHERE task LIKE ? OR label LIKE ?"
-                "  UNION ALL SELECT task, ts FROM picks WHERE task LIKE ?)"
+                "SELECT kind, task, label, detail, ts FROM ("
+                "  SELECT 'run' AS kind, task, '' AS label,"
+                "         'passed=' || passed AS detail, ts FROM runs"
+                "   WHERE task LIKE ?"
+                "  UNION ALL"
+                "  SELECT 'variant', task, label,"
+                "         'id=' || COALESCE(variant_id,'') || ' score=' || COALESCE(score,''), ts"
+                "    FROM variants WHERE task LIKE ? OR label LIKE ? OR variant_id LIKE ?"
+                "  UNION ALL"
+                "  SELECT 'pick', task, labels,"
+                "         'chose=' || COALESCE(chosen_id,'') || ' by=' || COALESCE(chooser,''), ts"
+                "    FROM picks WHERE task LIKE ? OR chosen_id LIKE ? OR chooser LIKE ?)"
                 " ORDER BY ts DESC LIMIT ?",
-                (like, like, like, like, limit),
+                (like, like, like, like, like, like, like, limit),
             ).fetchall()
         return [
             {"kind": k, "task": t, "label": lab, "detail": d, "ts": ts}

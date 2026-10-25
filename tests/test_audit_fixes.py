@@ -326,3 +326,15 @@ def test_the_baseline_survives_a_collection_error(tmp_path):
     baseline = critic.measure_baseline(tmp_path)
     assert baseline is not None
     assert baseline[0] >= 2
+
+
+def test_short_queries_are_searched(tmp_path):
+    """Audit M5: 'pi' and 'v2' found nothing because tokens needed three characters."""
+    from dacode.memory import VaultMemory
+
+    note = tmp_path / "Projects" / "x.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("---\ntitle: Pi harness\n---\nThe pi CLI runs the executor.\n", encoding="utf-8")
+
+    memory = VaultMemory(tmp_path)
+    assert memory.retrieve("pi")

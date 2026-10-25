@@ -224,6 +224,11 @@ class HarnessOptimizer:
 
     def _assign_fleet(self, variants: list[HarnessVariant], round_no: int) -> None:
         """Give each variant in a round a different model from the fleet."""
+        pinned = getattr(self, "_pinned_model", None)
+        if pinned:
+            for variant in variants:
+                variant.model = pinned
+            return
         if not self.fleet:
             return
         offset = round_no - 1
@@ -404,10 +409,13 @@ class HarnessOptimizer:
                     seen.add(variant.id)
                     all_variants.append(variant)
             round_best = self.compose(task, variants)
+            previous_best = best
             if (round_best.score or 0.0) >= (best.score or 0.0):
                 best = round_best
-            # cleanup losing trials to keep the repo tidy
-            self._cleanup_losers(variants, keep=best)
+            # cleanup losing trials to keep the repo tidy — including the best of an
+            # earlier round that this one just superseded, which used to be left
+            # behind on disk (audit M2)
+            self._cleanup_losers(variants, keep=best, also=[previous_best])
             if best.score is not None and best.score >= 1.0 and best.probe and best.probe.critique_passed:
                 break
             if round_no >= self.budget:
@@ -423,6 +431,9 @@ class HarnessOptimizer:
                 model = self.next_fleet_model() or (ladder.pop(0) if ladder else None)
                 if model and hasattr(self.executor, "model"):
                     self.executor.model = model
+                    # _assign_fleet() rewrites variant.model each round; without this
+                    # pin the escalation was a no-op whenever --fleet was set (M2).
+                    self._pinned_model = model
                     self._used_models.add(model)
             if action == "retry_same":
                 reprobe = list(variants)
@@ -509,11 +520,17 @@ class HarnessOptimizer:
             return "new_proposal"
         return action or "new_proposal"
 
-    def _cleanup_losers(self, variants: list[HarnessVariant], *, keep: HarnessVariant) -> None:
+    def _cleanup_losers(
+        self,
+        variants: list[HarnessVariant],
+        *,
+        keep: HarnessVariant,
+        also: list[HarnessVariant] | None = None,
+    ) -> None:
         if self.keep_winning_worktree:
             return
-        for variant in variants:
-            if variant is keep:
+        for variant in [*variants, *(also or [])]:
+            if variant is keep or variant is None:
                 continue
             trial_dir = variant.probe.workspace if variant.probe else None
             if not trial_dir:

@@ -38,7 +38,8 @@ __all__ = [
     "status",
 ]
 
-_WORD_RE = re.compile(r"[A-Za-z0-9_]{3,}|[\u0E00-\u0E7F]{2,}")
+# Two characters, not three: queries like "pi", "db" or "v2" are real lookups.
+_WORD_RE = re.compile(r"[A-Za-z0-9_]{2,}|[\u0E00-\u0E7F]{2,}")
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 
 # Words too common to carry signal in either language.
@@ -260,7 +261,9 @@ class VaultMemory:
             return []
         tokens = self._tokenize(query)
         if not tokens:
-            return []
+            # No keyword tokens ("?" or a symbol only): the semantic backend may
+            # still have something. Returning [] here skipped it entirely (audit M5).
+            return self._blend([], self._semantic_hits(query, limit=limit), limit)
         hits: list[MemoryHit] = []
         for note in self._iter_notes():
             try:
