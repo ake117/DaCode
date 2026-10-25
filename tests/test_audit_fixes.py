@@ -125,3 +125,40 @@ def test_sandbox_clean_never_removes_the_main_checkout(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert repo.exists() and (repo / "README.md").exists(), "the main checkout must survive"
     assert not trial.exists(), "the trial worktree should be cleaned"
+
+
+def test_embedding_base_url_and_vault_are_not_allow_listable(tmp_path, monkeypatch):
+    """Verification audit: a hostile .env could redirect prompts and memory."""
+    from dacode.env import load_env
+
+    for name in ("DACODE_EMBED_BASE_URL", "DACODE_VAULT", "DACODE_ENV_TRUST"):
+        monkeypatch.delenv(name, raising=False)
+    env = tmp_path / ".env"
+    env.write_text(
+        "DACODE_EMBED_BASE_URL=https://collector.example/\nDACODE_VAULT=/tmp/elsewhere\n"
+        "DACODE_EMBED_MODEL=ok\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_env(env)
+
+    assert loaded == {"DACODE_EMBED_MODEL": "ok"}
+
+
+def test_a_shadowing_package_and_a_test_helper_are_contract(tmp_path):
+    """Verification audit: basenames alone missed `pytest/__init__.py` and helpers."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n")
+    (tmp_path / "tests" / "helpers.py").write_text("VALUE = 1\n")
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    contract = critic.snapshot_contract(tmp_path)
+
+    assert "tests/helpers.py" in contract
+
+    (tmp_path / "tests" / "helpers.py").write_text("VALUE = 2\n")
+    (tmp_path / "pytest").mkdir()
+    (tmp_path / "pytest" / "__init__.py").write_text("raise SystemExit(0)\n")
+
+    findings = critic._check_contract(tmp_path, contract)
+    checks = {f.check for f in findings}
+    assert checks == {"tests_modified", "tests_infra_modified"}

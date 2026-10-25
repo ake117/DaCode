@@ -174,6 +174,37 @@ def wrap_command(
     return argv
 
 
+#: Credentials under $HOME that are never bound into a sandbox, whatever a policy
+#: asks for. Narrow on purpose: interpreters and venvs often live under
+#: ``~/.hermes/tools`` or ``~/.local``, so a whole-directory deny for those would
+#: make the sandbox unable to start. ``.pi`` is absent because the agent executor
+#: has to authenticate — that is a known open item in SECURITY.md.
+HOME_SECRET_DIRS: tuple[str, ...] = (
+    ".ssh", ".gnupg", ".aws", ".kube", ".docker", ".password-store", ".mozilla",
+)
+HOME_SECRET_FILES: tuple[str, ...] = (
+    ".git-credentials", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".my.cnf",
+)
+HOME_SECRET_RELATIVE: tuple[str, ...] = (
+    ".hermes/.env", ".hermes/config.yaml", ".hermes/google_token.json",
+    ".config/gcloud", ".config/gh", ".docker/config.json",
+)
+
+
+def _is_home_secret(path: Path, home: Path) -> bool:
+    """Is this a credential path under $HOME (or a directory holding some)?"""
+    try:
+        relative = path.resolve().relative_to(home)
+    except (OSError, ValueError):
+        return False
+    if not relative.parts:
+        return False
+    if relative.parts[0] in HOME_SECRET_DIRS or relative.name in HOME_SECRET_FILES:
+        return True
+    text = str(relative)
+    return any(text == entry or text.startswith(entry + "/") for entry in HOME_SECRET_RELATIVE)
+
+
 def _bind_candidates(path: Path, *, home: Path | None = None) -> list[Path]:
     """A path plus what it really points at.
 
@@ -186,12 +217,14 @@ def _bind_candidates(path: Path, *, home: Path | None = None) -> list[Path]:
     out: list[Path] = []
 
     def _exposes_home(candidate: Path) -> bool:
-        """Binding $HOME or an ancestor of it would undo the home tmpfs."""
+        """$HOME, an ancestor of it, or a credentials directory under it."""
         try:
             resolved = candidate.resolve()
         except OSError:
             return False
-        return resolved == home_path or home_path.is_relative_to(resolved)
+        if resolved == home_path or home_path.is_relative_to(resolved):
+            return True
+        return _is_home_secret(resolved, home_path)
 
     for candidate in (path,):
         if candidate.exists() and not _exposes_home(candidate):

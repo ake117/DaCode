@@ -64,11 +64,13 @@ ENV_ALLOW_LIST: tuple[str, ...] = (
     "XAI_API_KEY",
     "JEV_API_KEY",
     "DACODE_EMBED_API_KEY",
-    "DACODE_EMBED_BASE_URL",
+    # Deliberately absent: DACODE_EMBED_BASE_URL and DACODE_VAULT. Both redirect
+    # where prompts and memory go, so a hostile checkout could send text to a host
+    # it controls (verification audit, Oct 2026). Set those in your own shell, or
+    # DACODE_ENV_TRUST=1 for a repository you own.
     "DACODE_EMBED_MODEL",
     "DACODE_EMBED_DIMS",
     "DACODE_EMBED_BATCH",
-    "DACODE_VAULT",
 )
 
 

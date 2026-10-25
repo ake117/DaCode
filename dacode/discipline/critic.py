@@ -178,6 +178,41 @@ class PstackCritic:
             return None
         return proc.returncode, proc.stdout, proc.stderr, total, failed, skipped
 
+    def _is_contract_path(self, relative: Path, *, test_dirs: set[str]) -> bool:
+        """Is this path part of what decides the gate's answer?
+
+        Basenames alone were not enough (verification audit, Oct 2026): a trial can
+        add ``pytest/__init__.py`` to shadow the runner, or rewrite
+        ``tests/helpers.py`` to make every assertion trivially true. So: gate-infra
+        basenames, a shadowing path component, a conftest anywhere, and *any* file
+        inside a directory that holds tests.
+        """
+        name = relative.name
+        if name in self.gate_infra:
+            return True
+        if name.startswith("conftest") or name.startswith("test_") or name.startswith("_test"):
+            return True
+        if fnmatch.fnmatch(name, self.test_glob):
+            return True
+        if any(part in SHADOW_NAMES for part in relative.parts[:-1]):
+            return True
+        if name.endswith(".py") and str(relative.parent) in test_dirs:
+            return True
+        return False
+
+    def _test_dirs(self, root: Path) -> set[str]:
+        dirs: set[str] = set()
+        for path in root.rglob("*"):
+            if not path.is_file() or not fnmatch.fnmatch(path.name, self.test_glob):
+                continue
+            relative = path.parent.relative_to(root)
+            # A dedicated test directory is contract; the repository root is not,
+            # or every source file a trial writes there would look like a test
+            # helper (it cannot be told apart from one by path alone).
+            if str(relative) != ".":
+                dirs.add(str(relative))
+        return dirs
+
     def snapshot_contract(self, workspace: str | Path) -> dict[str, str]:
         """Hash the test files and gate infrastructure as they are *now*.
 
@@ -196,7 +231,7 @@ class PstackCritic:
             relative = path.relative_to(root)
             if ".git" in relative.parts:
                 continue
-            if not (fnmatch.fnmatch(path.name, self.test_glob) or path.name in self.gate_infra):
+            if not self._is_contract_path(relative, test_dirs=self._test_dirs(root)):
                 continue
             try:
                 contract[str(relative)] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -212,10 +247,17 @@ class PstackCritic:
 
         findings: list[Finding] = []
         current = self.snapshot_contract(workspace)
+        test_dirs = self._test_dirs(workspace)
+
+        def _check_for(relative: str) -> str:
+            path = Path(relative)
+            # a file inside a test directory, or a test module, is the suite itself
+            if fnmatch.fnmatch(path.name, self.test_glob) or str(path.parent) in test_dirs:
+                return "tests_modified"
+            return "tests_infra_modified"
 
         for path, digest in contract.items():
-            name = Path(path).name
-            check = "tests_modified" if fnmatch.fnmatch(name, self.test_glob) else "tests_infra_modified"
+            check = _check_for(path)
             if path not in current:
                 findings.append(
                     Finding(
@@ -236,8 +278,7 @@ class PstackCritic:
                 )
 
         for path in sorted(set(current) - set(contract)):
-            name = Path(path).name
-            check = "tests_modified" if fnmatch.fnmatch(name, self.test_glob) else "tests_infra_modified"
+            check = _check_for(path)
             findings.append(
                 Finding(
                     check=check,
@@ -403,6 +444,9 @@ class PstackCritic:
             ran=True,
         )
 
+
+#: Path components that shadow or hook the runner when the workspace is `sys.path[0]`.
+SHADOW_NAMES: tuple[str, ...] = ("pytest", "_pytest", "pluggy", "py", "sitecustomize", "usercustomize")
 
 DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "conftest.py",

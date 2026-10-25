@@ -249,3 +249,23 @@ def test_unknown_isolate_values_are_rejected(rig_repo):
     rig.config = DaCodeConfig(repo=rig_repo, isolate="sandcastle")
     with pytest.raises(RuntimeError, match="unknown --isolate value"):
         DaCodeRig._isolation_policy(rig)
+
+
+def test_credentials_directories_under_home_are_refused(tmp_path):
+    """Verification audit: `$HOME` itself was refused, its secret subdirs were not."""
+    from dacode.sandbox.bwrap import _bind_candidates
+
+    home = Path.home().resolve()
+    for name in (".ssh", ".gnupg", ".aws"):
+        candidate = home / name
+        if candidate.exists():
+            assert _bind_candidates(candidate) == [], f"{name} must never be bound"
+    for name in (".hermes/.env", ".hermes/config.yaml"):
+        candidate = home / name
+        if candidate.exists():
+            assert _bind_candidates(candidate) == [], f"{name} must never be bound"
+    # interpreters and venvs under $HOME stay bindable, or the sandbox cannot start
+    for name in (".hermes/tools", ".local"):
+        candidate = home / name
+        if candidate.exists():
+            assert _bind_candidates(candidate), f"{name} must stay bindable"
