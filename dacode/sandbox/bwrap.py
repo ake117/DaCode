@@ -69,6 +69,9 @@ class IsolationPolicy:
     read_only_paths: tuple[Path, ...] = field(default_factory=tuple)
     #: Extra environment variable names to pass through.
     env_allow: tuple[str, ...] = field(default_factory=tuple)
+    #: Files replaced by /dev/null inside the sandbox (a repository's own .env, an
+    #: agent's auth file): readable parent, invisible file.
+    hidden_files: tuple[Path, ...] = field(default_factory=tuple)
 
     def with_paths(self, *paths: str | Path | None) -> "IsolationPolicy":
         """Return a copy with more read-only bindings (None entries are ignored)."""
@@ -82,6 +85,7 @@ class IsolationPolicy:
             network=self.network,
             read_only_paths=tuple(merged),
             env_allow=self.env_allow,
+            hidden_files=self.hidden_files,
         )
 
 
@@ -187,10 +191,20 @@ def wrap_command(
     # /proc, /dev and /tmp come before any bind: a workspace under /tmp would
     # otherwise be mounted over by the tmpfs and bwrap would fail to chdir.
     argv += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
+    # Host sockets live under /run (/run/user/$UID/bus, ssh-agent, docker.sock) and
+    # /var/tmp keeps other processes' droppings; neither belongs in a trial.
+    argv += ["--tmpfs", "/run", "--tmpfs", "/var/tmp"]
 
     for path in policy.read_only_paths:
         for candidate in _bind_candidates(Path(path).expanduser(), home=home_path):
             argv += ["--ro-bind", str(candidate), str(candidate)]
+
+    # Files the policy hides are replaced by /dev/null, so a repository's own .env
+    # (or an agent's auth file) is invisible even though its parent is mounted.
+    for hidden in policy.hidden_files:
+        target = Path(hidden).expanduser()
+        if target.exists() and not target.is_dir():
+            argv += ["--ro-bind", "/dev/null", str(target.resolve())]
 
     # The trial workspace is the only writable place that survives the run.
     argv += ["--bind", str(workspace_path), str(workspace_path)]

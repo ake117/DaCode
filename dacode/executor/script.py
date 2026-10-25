@@ -6,6 +6,7 @@ command the variant carries in ``variant.payload['command']``.
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -40,7 +41,9 @@ class ScriptExecutor:
         argv = command if isinstance(command, list) else command
         use_shell = self.shell and isinstance(command, str)
         if self.isolation is not None and self.isolation.enabled:
-            base = ["bash", "-lc", command] if use_shell else list(command)
+            # Not a login shell: inside bwrap /etc/profile would run against an
+            # empty $HOME and clobber the allow-listed PATH (audit L2).
+            base = ["bash", "-c", command] if use_shell else shlex.split(command)
             try:
                 argv = wrap_command(base, workspace=workspace, policy=self.isolation)
                 use_shell = False

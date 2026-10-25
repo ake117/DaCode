@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from dacode import state
+from dacode.redact import redact_event
 
 __all__ = ["default_path", "record", "load_events"]
 
@@ -54,7 +55,7 @@ def record(event: dict) -> None:
             path.parent.chmod(0o700)
         except OSError:
             pass
-        event = {"ts": time.time(), **event}
+        event = redact_event({"ts": time.time(), **event})
         with _WRITE_LOCK:
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(event, ensure_ascii=False) + "\n")

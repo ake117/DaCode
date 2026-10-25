@@ -11,6 +11,7 @@ Lifecycle (from the blueprint):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 from dacode.config import DaCodeConfig
@@ -22,6 +23,7 @@ from dacode.harness.optimizer import DEFAULT_SYSTEM_PROMPT, HarnessOptimizer
 from dacode.judgment import build_judge
 from dacode.llm import build_llm
 from dacode.memory import Lesson, VaultMemory
+from dacode.redact import redact
 from dacode.sandbox import GitSandbox
 from dacode.sandbox.bwrap import IsolationPolicy, available as bwrap_available, describe as describe_isolation
 
@@ -118,10 +120,17 @@ class DaCodeRig:
                 "--isolate bwrap requested but bubblewrap is not installed "
                 "(install bubblewrap, or run with --isolate none)"
             )
+        # A ro-bind of / makes the repository's own .env readable inside the
+        # sandbox, and the Pi executor binds ~/.pi so the agent can authenticate.
+        # Hide both: the provider key arrives through --setenv instead.
+        hidden: list[Path] = [Path(self.config.repo).resolve() / ".env"]
+        if (os.environ.get("DACODE_PI_AUTH") or "mask").lower() != "bind":
+            hidden.append(Path.home() / ".pi" / "agent" / "auth.json")
         return IsolationPolicy(
             enabled=True,
             network=bool(self.config.isolate_network),
             env_allow=(),
+            hidden_files=tuple(path for path in hidden if path.exists()),
         )
 
     # -- layer introspection ----------------------------------------------
@@ -184,8 +193,10 @@ class DaCodeRig:
     @staticmethod
     def _build_lesson(result: HarnessResult) -> Lesson:
         best = result.best
+        # Everything below is persisted in the shared vault: redact credentials a
+        # task or a model may have echoed (audit H5).
         lines = [
-            f"## Task\n\n{result.task}\n",
+            f"## Task\n\n{redact(result.task)}\n",
             "## Winning harness",
             f"\n- variant: `{best.id}` ({best.label})",
             f"- rounds: {result.rounds}",
@@ -198,10 +209,15 @@ class DaCodeRig:
                 # worktree name only — absolute scratch paths are machine-specific and ephemeral
                 f"- trial worktree: `{Path(best.probe.workspace).name}`",
             ]
-        lines += ["\n## System prompt that won\n", "```", best.system_prompt.strip(), "```"]
+        lines += [
+            "\n## System prompt that won\n",
+            "```",
+            redact(best.system_prompt.strip()),
+            "```",
+        ]
         return Lesson(
-            title=f"DaCode lesson: {result.task[:60]}",
+            title=redact(f"DaCode lesson: {result.task[:60]}"),
             body="\n".join(lines),
             tags=["dacode", "lesson", "harness2"],
-            source_task=result.task[:120],
+            source_task=redact(result.task[:120]),
         )
