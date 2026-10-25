@@ -217,3 +217,41 @@ def test_gate_infrastructure_can_be_relaxed_explicitly(tmp_path):
     )
     report = critic.review_workspace(ws)
     assert "tests_infra_modified" not in {f.check for f in report.findings}
+
+
+def test_a_trial_that_commits_its_test_edit_is_still_caught(tmp_path):
+    """Audit C3: git status compares against the worktree's own index."""
+    ws = _workspace(tmp_path, tests={"test_a.py": "def test_a():\n    assert 1 == 2\n"})
+    _git_init(ws)
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    contract = critic.snapshot_contract(ws)
+
+    (ws / "test_a.py").write_text("def test_a():\n    assert True\n")
+    import subprocess
+
+    subprocess.run(("git", "commit", "-qam", "hide the edit"), cwd=str(ws), check=True)
+
+    # the git-status route is blind to it …
+    assert not [f for f in critic._check_test_integrity(ws) if f.check == "tests_modified"]
+    # … the snapshot is not.
+    report = critic.review_workspace(ws, contract=contract)
+    assert report.passed is False
+    assert "tests_modified" in {f.check for f in report.findings}
+
+
+def test_a_removed_test_file_fails_the_contract(tmp_path):
+    ws = _workspace(tmp_path, tests={"test_a.py": GREEN})
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    contract = critic.snapshot_contract(ws)
+    (ws / "test_a.py").unlink()
+    findings = critic._check_contract(ws, contract)
+    assert [f.check for f in findings] == ["tests_modified"]
+
+
+def test_a_new_conftest_fails_the_contract(tmp_path):
+    ws = _workspace(tmp_path, tests={"test_a.py": GREEN})
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    contract = critic.snapshot_contract(ws)
+    (ws / "conftest.py").write_text("")
+    findings = critic._check_contract(ws, contract)
+    assert [f.check for f in findings] == ["tests_infra_modified"]

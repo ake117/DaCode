@@ -147,15 +147,29 @@ class HarnessOptimizer:
         # creation serialised, run the executor itself in parallel below.
         with self._sandbox_lock:
             workspace = self.sandbox.create(trial_id)
+            # Hash the suite before the trial can touch it; the git-status route
+            # cannot see edits a trial has committed.
+            contract = (
+                self.critic.snapshot_contract(workspace)
+                if hasattr(self.critic, "snapshot_contract")
+                else None
+            )
         started = time.perf_counter()
         report = None  # a failed trial must still be recordable
         try:
             exec_result = self.executor.run(variant, workspace)
-            try:
-                report = self.critic.review_workspace(workspace, baseline=self.baseline)
-            except TypeError:
-                # a custom critic may predate the baseline argument
-                report = self.critic.review_workspace(workspace)
+            # Ask the critic only for the arguments it declares: catching TypeError
+            # here would also swallow a real one from inside the review and silently
+            # re-run the suite without the baseline guard.
+            import inspect
+
+            parameters = inspect.signature(self.critic.review_workspace).parameters
+            kwargs: dict[str, object] = {}
+            if "baseline" in parameters:
+                kwargs["baseline"] = self.baseline
+            if "contract" in parameters:
+                kwargs["contract"] = contract
+            report = self.critic.review_workspace(workspace, **kwargs)
             if report.passed:
                 self.sandbox.checkpoint(trial_id, f"dacode: {variant.label} passed ({trial_id})")
             result = ProbeResult(

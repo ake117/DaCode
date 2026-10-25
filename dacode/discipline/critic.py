@@ -178,6 +178,79 @@ class PstackCritic:
             return None
         return proc.returncode, proc.stdout, proc.stderr, total, failed, skipped
 
+    def snapshot_contract(self, workspace: str | Path) -> dict[str, str]:
+        """Hash the test files and gate infrastructure as they are *now*.
+
+        Taken before the executor runs, on the untouched worktree. Comparing hashes
+        afterwards is the only check a trial cannot reach around by committing: the
+        git-status route compares against the worktree's own index, which the trial
+        can move.
+        """
+        import hashlib
+
+        root = Path(workspace)
+        contract: dict[str, str] = {}
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root)
+            if ".git" in relative.parts:
+                continue
+            if not (fnmatch.fnmatch(path.name, self.test_glob) or path.name in self.gate_infra):
+                continue
+            try:
+                contract[str(relative)] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+        return contract
+
+    def _check_contract(
+        self, workspace: Path, contract: dict[str, str]
+    ) -> list[Finding]:
+        """Compare the workspace against a snapshot taken before the trial ran."""
+        import hashlib
+
+        findings: list[Finding] = []
+        current = self.snapshot_contract(workspace)
+
+        for path, digest in contract.items():
+            name = Path(path).name
+            check = "tests_modified" if fnmatch.fnmatch(name, self.test_glob) else "tests_infra_modified"
+            if path not in current:
+                findings.append(
+                    Finding(
+                        check=check,
+                        severity="error",
+                        message=f"trial removed {path} — the gate must judge the suite it was given",
+                        location=str(workspace / path),
+                    )
+                )
+            elif current[path] != digest:
+                findings.append(
+                    Finding(
+                        check=check,
+                        severity="error",
+                        message=f"trial changed {path} — the gate must judge unedited tests",
+                        location=str(workspace / path),
+                    )
+                )
+
+        for path in sorted(set(current) - set(contract)):
+            name = Path(path).name
+            check = "tests_modified" if fnmatch.fnmatch(name, self.test_glob) else "tests_infra_modified"
+            findings.append(
+                Finding(
+                    check=check,
+                    severity="error",
+                    message=(
+                        f"trial added {path} — a new test or config file changes what the gate "
+                        "sees; a human must review it"
+                    ),
+                    location=str(workspace / path),
+                )
+            )
+        return findings
+
     def _check_test_integrity(self, workspace: Path) -> list[Finding]:
         """A trial may not edit, add or delete a test file.
 
@@ -196,9 +269,25 @@ class PstackCritic:
                 timeout=30,
             )
         except (OSError, subprocess.SubprocessError):
-            return []
+            return [
+                Finding(
+                    check="integrity_unavailable",
+                    severity="error",
+                    message="could not read the worktree's git status — refusing to certify unedited tests",
+                    location=str(workspace),
+                )
+            ]
         if proc.returncode != 0:
-            return []  # not a git workspace in this trial
+            if "not a git repository" in (proc.stderr or "").lower():
+                return []  # standalone use on a plain directory: nothing to compare
+            return [
+                Finding(
+                    check="integrity_unavailable",
+                    severity="error",
+                    message="git status failed in the worktree — refusing to certify unedited tests",
+                    location=str(workspace),
+                )
+            ]
 
         findings: list[Finding] = []
         for line in proc.stdout.splitlines():
@@ -235,10 +324,14 @@ class PstackCritic:
         workspace: str | Path,
         *,
         baseline: tuple[int, int] | None = None,
+        contract: dict[str, str] | None = None,
     ) -> CritiqueReport:
         workspace = Path(workspace)
         findings, _files = self._scan_tests(workspace)
-        findings.extend(self._check_test_integrity(workspace))
+        if contract is not None:
+            findings.extend(self._check_contract(workspace, contract))
+        else:
+            findings.extend(self._check_test_integrity(workspace))
         exit_code, stdout, stderr, total, failed, skipped = self._run_tests(workspace)
 
         if baseline is not None:
