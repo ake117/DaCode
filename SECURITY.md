@@ -19,12 +19,12 @@ provider API keys in the environment, and anything reachable over the network.
 | Area | Guarantee | Enforced by |
 |---|---|---|
 | Gate verdict | exit 0 **and** `failed == 0` **and** a non-zero test count | `PstackCritic.review_workspace` |
-| Test integrity | a trial may not edit/add/delete `test_*.py`, `conftest.py`, `pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `pytest.py`, `sitecustomize.py` | `tests_modified`, `tests_infra_modified` |
+| Test integrity | a trial may not edit/add/delete `test_*.py`, `conftest*.py`, `pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `pytest.py`, `sitecustomize.py`, `usercustomize.py`, any file in a dedicated test directory, or any path containing a shadowing component (`pytest/`, `_pytest/`, `pluggy/`, `py/`) | `tests_modified`, `tests_infra_modified` |
 | Suite size | the collected count may not fall below the baseline, skips may not rise | `tests_lost`, `tests_skipped` (baseline measured on the untouched repo) |
 | Suite integrity vs. a commit | every test file and gate-infrastructure file is hashed before the trial runs; an edit, a removal or a new file fails even if the trial commits it or replaces `.git` | `snapshot_contract()` + `_check_contract()` |
-| Gate network | the gate never gets a network namespace or provider keys, even when the executor does | separate `gate_isolation` policy |
-| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, workspace-only writes, `/proc`, `/dev`, `/tmp` private, allow-listed environment, `$HOME` never re-bound | `dacode/sandbox/bwrap.py` |
-| Secrets in the environment | `<repo>/.env` may only set provider keys; `DACODE_*`, `GIT_*`, `PYTHON*`, `LD_*`, `*_PROXY` are ignored (override with `DACODE_ENV_TRUST=1` for repositories you own) | `dacode/env.py` |
+| Gate network (when isolation is on) | the gate never gets a network namespace or provider keys, even when the executor does. With `--isolate none` nothing is sandboxed, so the gate runs on the host like everything else | separate `gate_isolation` policy |
+| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, workspace-only writes, `/proc`, `/dev`, `/tmp` private, allow-listed environment. `$HOME`, its ancestors **and credential paths under it** (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.docker`, `~/.password-store`, `~/.hermes/.env`, `~/.hermes/config.yaml`, `~/.config/gcloud`, `~/.config/gh`) are refused as binds | `dacode/sandbox/bwrap.py` |
+| Secrets in the environment | `<repo>/.env` may only set provider keys and the embedding *model* knobs. Everything else is ignored, including `DACODE_EMBED_BASE_URL` and `DACODE_VAULT` (either would redirect where prompts and memory go), `GIT_*`, `PYTHON*`, `LD_*` and `*_PROXY`. `DACODE_ENV_TRUST=1` is the explicit opt-out for repositories you own | `dacode/env.py` |
 | Fail closed | no bwrap → `RuntimeError`; an unsandboxable executor returns 126, the gate 125 — never a silent unsandboxed run | orchestrator + critic |
 | Cleanup | `sandbox clean` never touches the main checkout, only worktrees under the sandbox root | `dacode/cli.py` |
 
@@ -49,7 +49,12 @@ provider API keys in the environment, and anything reachable over the network.
    cleaned up. Planned: filter candidates to gate-passing variants first.
 6. **Parallel probing races.** `sandbox.checkpoint()` and the JSONL/SQLite writes
    are not fully serialised under `--parallel N`.
-7. **Smaller ones:** `escalate_model` is a no-op when a fleet is configured;
+7. **A test directory at the repository root is not covered.** The "any file in a
+   test directory is contract" rule applies to dedicated directories (`tests/`,
+   `spec/`); at the root a test-support module cannot be told apart from
+   application source by path, so only `test_*.py`, `conftest*.py` and the
+   gate-infrastructure names are protected there.
+8. **Smaller ones:** `escalate_model` is a no-op when a fleet is configured;
    `state.rebuild()` wipes the DB before checking `DACODE_RUNLOG=off`;
    `state.ingest()` drops `findings`/`models`; `memory search` ignores queries
    shorter than 3 characters; `ScriptExecutor(shell=False)` splits a string
