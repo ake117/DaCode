@@ -21,6 +21,7 @@ provider API keys in the environment, and anything reachable over the network.
 | Gate verdict | exit 0 **and** `failed == 0` **and** a non-zero test count | `PstackCritic.review_workspace` |
 | Test integrity | a trial may not edit/add/delete `test_*.py`, `conftest.py`, `pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `pytest.py`, `sitecustomize.py` | `tests_modified`, `tests_infra_modified` |
 | Suite size | the collected count may not fall below the baseline, skips may not rise | `tests_lost`, `tests_skipped` (baseline measured on the untouched repo) |
+| Suite integrity vs. a commit | every test file and gate-infrastructure file is hashed before the trial runs; an edit, a removal or a new file fails even if the trial commits it or replaces `.git` | `snapshot_contract()` + `_check_contract()` |
 | Gate network | the gate never gets a network namespace or provider keys, even when the executor does | separate `gate_isolation` policy |
 | Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, workspace-only writes, `/proc`, `/dev`, `/tmp` private, allow-listed environment, `$HOME` never re-bound | `dacode/sandbox/bwrap.py` |
 | Secrets in the environment | `<repo>/.env` may only set provider keys; `DACODE_*`, `GIT_*`, `PYTHON*`, `LD_*`, `*_PROXY` are ignored (override with `DACODE_ENV_TRUST=1` for repositories you own) | `dacode/env.py` |
@@ -29,29 +30,26 @@ provider API keys in the environment, and anything reachable over the network.
 
 ## Known open items (do not assume these are handled)
 
-1. **A trial can commit its test edits inside the worktree.** The integrity check
-   compares against the worktree's `git status`, so a trial that runs
-   `git commit` (or replaces `.git`) hides the change. Planned fix: compare
-   hashes/diff against the base SHA on the host side.
-2. **Counts still come from stdout.** A JUnit XML written outside the workspace
+1. **Counts still come from stdout.** A JUnit XML written outside the workspace
    and parsed on the host would be authoritative; today a fake summary line plus
-   `os._exit(0)` is only caught by the infra guard and the `failed == 0` rule.
-3. **`~/.pi` is bound into the executor sandbox** so the agent can authenticate;
+   `os._exit(0)` is caught only by the gate-infrastructure guard, the `failed == 0`
+   rule and the snapshot comparison.
+2. **`~/.pi` is bound into the executor sandbox** so the agent can authenticate;
    that exposes `~/.pi/agent/auth.json` to trial code. Planned: pass only the
    provider key it needs.
-4. **`/run/user/$UID` host sockets** (D-Bus, ssh-agent, gpg-agent) are reachable
+3. **`/run/user/$UID` host sockets** (D-Bus, ssh-agent, gpg-agent) are reachable
    with `--unshare-net` still on. Planned: `--tmpfs /run`.
-5. **Secrets can reach the logs.** `ProbeResult.stdout` keeps the last 4,000
+4. **Secrets can reach the logs.** `ProbeResult.stdout` keeps the last 4,000
    characters and `sandbox.checkpoint()` runs `git add -A`, so an echoed key or a
    stray `.env` can land in `runlog.jsonl`, `memory.db`, or the shared `.git`
    object store. Planned: redact known secret values, never stage untracked
    secret-looking files, `chmod 0700` the state directory.
-6. **Compose can pick a failing variant.** With a judge or LLM pick, a variant
+5. **Compose can pick a failing variant.** With a judge or LLM pick, a variant
    that failed the gate can outrank a passing one and the passing worktree is then
    cleaned up. Planned: filter candidates to gate-passing variants first.
-7. **Parallel probing races.** `sandbox.checkpoint()` and the JSONL/SQLite writes
+6. **Parallel probing races.** `sandbox.checkpoint()` and the JSONL/SQLite writes
    are not fully serialised under `--parallel N`.
-8. **Smaller ones:** `escalate_model` is a no-op when a fleet is configured;
+7. **Smaller ones:** `escalate_model` is a no-op when a fleet is configured;
    `state.rebuild()` wipes the DB before checking `DACODE_RUNLOG=off`;
    `state.ingest()` drops `findings`/`models`; `memory search` ignores queries
    shorter than 3 characters; `ScriptExecutor(shell=False)` splits a string
