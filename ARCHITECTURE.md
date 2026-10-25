@@ -57,7 +57,7 @@ and the score clears `min_score`.
 
 When the run passes, `DaCodeRig._build_lesson` composes a markdown lesson
 (the task, the winning variant, the score, and the winning system prompt) and
-`VaultMemory.ingest` writes it under `Resources/DaCode/Lessons/` with a
+`VaultMemory.ingest` writes it under `Projects/DaCode/Lessons/` with a
 `type: lesson` frontmatter block — so it is retrievable on the next run.
 
 ## The Harness² recursion, precisely

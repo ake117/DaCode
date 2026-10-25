@@ -214,7 +214,7 @@ external search script and maps its JSON onto `SemanticHit`.
    same variants, propose fresh ones, escalate the executor up a model ladder
    (`--escalate-models`), or stop and flag the task for human review.
 4. **Memory Ingestion** — if the winner passed, a `type: lesson` note is written
-   into the vault under `Resources/DaCode/Lessons/`.
+   into the vault under `Projects/DaCode/Lessons/`.
 
 Losing trial worktrees are cleaned up automatically; the winner's worktree is
 kept so you can inspect the diff.

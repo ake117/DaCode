@@ -120,11 +120,13 @@ def build_report(
             tasks[key] = TaskRetro(task=key)
         return tasks[key]
 
+    counted = 0
     for event in events:
         kind = event.get("type")
         task = str(event.get("task") or "")
         if task_filter and task_filter.lower() not in task.lower():
             continue
+        counted += 1
         row = bucket(task)
         if kind == "run":
             row.runs += 1
@@ -152,7 +154,7 @@ def build_report(
     ordered = sorted(tasks.values(), key=lambda t: (-t.runs, t.task))
     return RetroReport(
         since_days=since_days,
-        events=len(events),
+        events=counted,
         tasks=ordered,
         suggestions=_suggest(ordered),
     )

@@ -30,35 +30,43 @@ provider API keys in the environment, and anything reachable over the network.
 
 ## Known open items (do not assume these are handled)
 
-1. **Counts still come from stdout.** A JUnit XML written outside the workspace
-   and parsed on the host would be authoritative; today a fake summary line plus
-   `os._exit(0)` is caught only by the gate-infrastructure guard, the `failed == 0`
-   rule and the snapshot comparison.
+1. **Counts still come from stdout.** Everything the gate knows about pass/fail is
+   parsed from text the code under test can print. A fake summary line is caught by
+   the gate-infrastructure contract, by `failed == 0` and by the snapshot, but the
+   ground truth is not authoritative. The durable fix is a JUnit XML written outside
+   the workspace and parsed on the host.
 2. **`~/.pi` is bound into the executor sandbox** so the agent can authenticate;
    that exposes `~/.pi/agent/auth.json` to trial code. Planned: pass only the
-   provider key it needs.
-3. **`/run/user/$UID` host sockets** (D-Bus, ssh-agent, gpg-agent) are reachable
-   with `--unshare-net` still on. Planned: `--tmpfs /run`.
-4. **Secrets can reach the logs.** `ProbeResult.stdout` keeps the last 4,000
-   characters and `sandbox.checkpoint()` runs `git add -A`, so an echoed key or a
-   stray `.env` can land in `runlog.jsonl`, `memory.db`, or the shared `.git`
-   object store. Planned: redact known secret values, never stage untracked
-   secret-looking files, `chmod 0700` the state directory.
-5. **Compose can pick a failing variant.** With a judge or LLM pick, a variant
-   that failed the gate can outrank a passing one and the passing worktree is then
-   cleaned up. Planned: filter candidates to gate-passing variants first.
-6. **Parallel probing races.** `sandbox.checkpoint()` and the JSONL/SQLite writes
-   are not fully serialised under `--parallel N`.
+   provider key the run needs.
+3. **Host paths still visible inside the sandbox.** `/run`, `/sys` and `/var/tmp`
+   are mounted read-only, so `/run/user/$UID` sockets (D-Bus, ssh-agent,
+   gpg-agent), `/run/docker.sock` and `/run/dbus/system_bus_socket` are reachable;
+   with `--ro-bind / /` a repository that does not live under `$HOME` or `/tmp`
+   (say `/srv/app`) is readable inside the sandbox, including its `.env` and
+   `.git`. Planned: `--tmpfs /run`, and binding the workspace rather than `/`.
+4. **Nothing is redacted before it is persisted.** The state directory and the
+   runlog are now `0700`, but `_build_lesson()` writes the task text, the winning
+   label and its system prompt verbatim into the vault, and the runlog records
+   whatever the harness emits. A key echoed into a task string, or an injected
+   instruction, survives into future runs. Planned: redact `sk-`, `gsk_`, `AIza`
+   and known env values on the way to the log, the store and the lesson.
+5. **The baseline runs the suite on the repository itself**, read-write under the
+   gate sandbox, and a repository whose untouched tests fail to import reports
+   `total == 0` → baseline `None`, which switches `tests_lost`/`tests_skipped` off
+   for the whole run. A collection `ImportError` also makes `base_total = 1` even
+   if the file declares dozens of tests.
+6. **Worktrees leak across rounds.** `retry_same` re-probes the same variant
+   objects, and a new best in round 2 never removes round 1's former best.
 7. **A test directory at the repository root is not covered.** The "any file in a
    test directory is contract" rule applies to dedicated directories (`tests/`,
    `spec/`); at the root a test-support module cannot be told apart from
    application source by path, so only `test_*.py`, `conftest*.py` and the
    gate-infrastructure names are protected there.
 8. **Smaller ones:** `escalate_model` is a no-op when a fleet is configured;
-   `state.rebuild()` wipes the DB before checking `DACODE_RUNLOG=off`;
-   `state.ingest()` drops `findings`/`models`; `memory search` ignores queries
-   shorter than 3 characters; `ScriptExecutor(shell=False)` splits a string
-   command per character.
+   `state.search()`'s `LIKE` fallback returns placeholder columns and ignores
+   `variant_id`/`best_id`/`chosen_id`; `memory search` ignores queries shorter than
+   three characters; `ScriptExecutor(shell=False)` splits a string command per
+   character.
 
 ## Running safely today
 
