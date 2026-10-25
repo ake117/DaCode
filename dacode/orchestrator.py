@@ -97,10 +97,23 @@ class DaCodeRig:
         )
 
     def _gate_isolation(self) -> IsolationPolicy | None:
-        """Isolation for the test gate: always offline, always key-free."""
+        """Isolation for the test gate: always offline, always key-free.
+
+        The gate runs the tested code's own tests, so the repository's `.env` must be
+        invisible to it exactly as it is to the executor: a hostile test could print
+        a provider key into the log the gate reads back. The executor's policy hid
+        this file; the gate's did not (Gemini 4 Argon audit, Oct 2026).
+        """
         if self.isolation is None:
             return None
-        return IsolationPolicy(enabled=True, network=False, read_only_paths=(), env_allow=())
+        hidden = [Path(self.config.repo).resolve() / ".env"]
+        return IsolationPolicy(
+            enabled=True,
+            network=False,
+            read_only_paths=(),
+            env_allow=(),
+            hidden_files=tuple(path for path in hidden if path.exists()),
+        )
 
     def _isolation_policy(self) -> IsolationPolicy | None:
         """Turn `--isolate` into a policy, refusing to pretend when bwrap is missing.

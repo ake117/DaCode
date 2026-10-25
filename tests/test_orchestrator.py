@@ -97,3 +97,26 @@ def test_rig_does_not_ingest_when_task_fails(rig_repo, vault):
     result = rig.run_task("implement calc.add")
     assert result.passed is False
     assert result.lesson_path is None
+
+
+def test_gate_isolation_hides_the_repository_dotenv(rig_repo, vault, monkeypatch):
+    """Gemini 4 Argon audit (Oct 2026): the gate's policy never hid <repo>/.env.
+
+    The gate runs the tested code's own tests. If the repository's .env stays
+    readable inside the gate sandbox, a hostile test can print a provider key into
+    the stdout the gate reads back — the executor already masked this file, the gate
+    did not.
+    """
+    import dacode.orchestrator as orch
+
+    monkeypatch.setattr(orch, "bwrap_available", lambda: True)
+    (rig_repo / ".env").write_text("OPENROUTER_API_KEY=sk-not-a-real-key\n", encoding="utf-8")
+
+    cfg = DaCodeConfig(repo=rig_repo, vault=vault, budget=1, isolate="bwrap")
+    llm = StubLLM(responses={}, default="")
+    rig = DaCodeRig(cfg, llm=llm, executor=FakeExecutor("good"))
+
+    policy = rig.gate_isolation
+    assert policy is not None and policy.enabled is True
+    hidden = {Path(p).resolve() for p in policy.hidden_files}
+    assert (rig_repo / ".env").resolve() in hidden
