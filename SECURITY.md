@@ -19,54 +19,42 @@ provider API keys in the environment, and anything reachable over the network.
 | Area | Guarantee | Enforced by |
 |---|---|---|
 | Gate verdict | exit 0 **and** `failed == 0` **and** a non-zero test count | `PstackCritic.review_workspace` |
-| Test integrity | a trial may not edit/add/delete `test_*.py`, `conftest*.py`, `pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `pytest.py`, `sitecustomize.py`, `usercustomize.py`, any file in a dedicated test directory, or any path containing a shadowing component (`pytest/`, `_pytest/`, `pluggy/`, `py/`) | `tests_modified`, `tests_infra_modified` |
-| Suite size | the collected count may not fall below the baseline, skips may not rise | `tests_lost`, `tests_skipped` (baseline measured on the untouched repo) |
-| Suite integrity vs. a commit | every test file and gate-infrastructure file is hashed before the trial runs; an edit, a removal or a new file fails even if the trial commits it or replaces `.git` | `snapshot_contract()` + `_check_contract()` |
-| Gate network (when isolation is on) | the gate never gets a network namespace or provider keys, even when the executor does. With `--isolate none` nothing is sandboxed, so the gate runs on the host like everything else | separate `gate_isolation` policy |
-| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, workspace-only writes, `/proc`, `/dev`, `/tmp` private, allow-listed environment. `$HOME`, its ancestors **and credential paths under it** (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.docker`, `~/.password-store`, `~/.hermes/.env`, `~/.hermes/config.yaml`, `~/.config/gcloud`, `~/.config/gh`) are refused as binds | `dacode/sandbox/bwrap.py` |
-| Secrets in the environment | `<repo>/.env` may only set provider keys and the embedding *model* knobs. Everything else is ignored, including `DACODE_EMBED_BASE_URL` and `DACODE_VAULT` (either would redirect where prompts and memory go), `GIT_*`, `PYTHON*`, `LD_*` and `*_PROXY`. `DACODE_ENV_TRUST=1` is the explicit opt-out for repositories you own | `dacode/env.py` |
-| Fail closed | no bwrap → `RuntimeError`; an unsandboxable executor returns 126, the gate 125 — never a silent unsandboxed run | orchestrator + critic |
-| Cleanup | `sandbox clean` never touches the main checkout, only worktrees under the sandbox root | `dacode/cli.py` |
+| Gate counts | for a pytest command the numbers come from a JUnit report written outside the workspace and parsed on the host; stdout and report must agree, and a green run with no report fails | `_run_once`, `_junit_counts`, `counts_disagree`, `counts_unavailable` |
+| Test integrity | a trial may not change, add or delete `test_*.py`, `conftest*.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `pytest.py`, `sitecustomize.py`, `usercustomize.py`, packaging metadata (`*.dist-info`, `entry_points.txt`), any file in a dedicated test directory, or any path with a shadowing component | `tests_modified`, `tests_infra_modified` |
+| Integrity vs. a commit | the suite is hashed before the trial runs, so an edit, a removal or a new file fails even if the trial commits it or replaces `.git` | `snapshot_contract()` + `_check_contract()` |
+| Suite size | the collected count may not fall below the baseline (dynamic, or the static `def test_*` count when collection fails), skips may not rise | `tests_lost`, `tests_skipped` |
+| Gate authority | only gate-passing variants are candidates for composition; a judge may pick among passes, never over one | `compose()`, `_variant_score()` |
+| Gate network | with isolation on, the gate never gets a network namespace or provider keys | separate `gate_isolation` policy |
+| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, private `/proc`, `/dev`, `/tmp`, `/run`, `/var/tmp`, workspace-only writes plus the gate's own report directory, allow-listed environment | `dacode/sandbox/bwrap.py` |
+| Credentials in the sandbox | `$HOME`, its ancestors and credential paths under it are never bound; `<repo>/.env` and `~/.pi/agent/auth.json` are masked with `/dev/null`; plugin autoloading is off | `_bind_candidates`, `hidden_files`, `_gate_env` |
+| Secrets in state | the state directory and the runlog are `0700`; events and lesson text are redacted (`sk-`, `gsk_`, `AIza`, `hf_`, JWTs, `Bearer`/`Basic`, and the values of known key variables) before they are written | `dacode/redact.py`, `runlog.record`, `_build_lesson` |
+| Host-side git | `checkpoint()` refuses a worktree whose `.git` is not a pointer file and runs git with hooks and fsmonitor disabled | `GitSandbox.checkpoint` |
+| Fail closed | no bwrap, or namespaces unavailable → `RuntimeError`; an unsandboxable executor returns 126, the gate 125 | `available()` probe, orchestrator, critic |
+| Concurrency | worktree creation, checkpoint and removal are serialised; the JSONL append and the SQLite mirror are locked | `_sandbox_lock`, `_WRITE_LOCK`, `_INGEST_LOCK` |
+| Cleanup | `sandbox clean` never touches the main checkout, and a superseded round's best worktree is removed | `dacode/cli.py`, `_cleanup_losers` |
 
 ## Known open items (do not assume these are handled)
 
-1. **Counts still come from stdout.** Everything the gate knows about pass/fail is
-   parsed from text the code under test can print. A fake summary line is caught by
-   the gate-infrastructure contract, by `failed == 0` and by the snapshot, but the
-   ground truth is not authoritative. The durable fix is a JUnit XML written outside
-   the workspace and parsed on the host.
-2. **`~/.pi` is bound into the executor sandbox** so the agent can authenticate;
-   that exposes `~/.pi/agent/auth.json` to trial code. Planned: pass only the
-   provider key the run needs.
-3. **Host paths still visible inside the sandbox.** `/run`, `/sys` and `/var/tmp`
-   are mounted read-only, so `/run/user/$UID` sockets (D-Bus, ssh-agent,
-   gpg-agent), `/run/docker.sock` and `/run/dbus/system_bus_socket` are reachable;
-   with `--ro-bind / /` a repository that does not live under `$HOME` or `/tmp`
-   (say `/srv/app`) is readable inside the sandbox, including its `.env` and
-   `.git`. Planned: `--tmpfs /run`, and binding the workspace rather than `/`.
-4. **Nothing is redacted before it is persisted.** The state directory and the
-   runlog are now `0700`, but `_build_lesson()` writes the task text, the winning
-   label and its system prompt verbatim into the vault, and the runlog records
-   whatever the harness emits. A key echoed into a task string, or an injected
-   instruction, survives into future runs. Planned: redact `sk-`, `gsk_`, `AIza`
-   and known env values on the way to the log, the store and the lesson.
-5. **The baseline runs the suite on the repository itself**, read-write under the
-   gate sandbox, and a repository whose untouched tests fail to import reports
-   `total == 0` → baseline `None`, which switches `tests_lost`/`tests_skipped` off
-   for the whole run. A collection `ImportError` also makes `base_total = 1` even
-   if the file declares dozens of tests.
-6. **Worktrees leak across rounds.** `retry_same` re-probes the same variant
-   objects, and a new best in round 2 never removes round 1's former best.
-7. **A test directory at the repository root is not covered.** The "any file in a
+1. **Non-pytest runners still count from stdout.** A `make test` or `npm test`
+   command gets no JUnit report, so a printed summary is again the only signal;
+   the test-integrity and infrastructure guards still apply, but there is no
+   authoritative count. Use a runner that can emit JUnit, or wrap it.
+2. **`/sys` stays mounted read-only.** No secrets live there, but host topology,
+   device names and some CPU information are visible to a trial.
+3. **The rest of `~/.pi` is bound** into the executor sandbox (only
+   `agent/auth.json` is masked). Agent config and logs are readable; treat them as
+   non-secret.
+4. **`DACODE_ENV_TRUST=1` is a real escape hatch.** It restores the old behaviour of
+   importing every key from a repository's `.env`. It prints a warning on stderr;
+   never set it for a repository you do not own.
+5. **A test directory at the repository root is not covered.** The "any file in a
    test directory is contract" rule applies to dedicated directories (`tests/`,
    `spec/`); at the root a test-support module cannot be told apart from
    application source by path, so only `test_*.py`, `conftest*.py` and the
    gate-infrastructure names are protected there.
-8. **Smaller ones:** `escalate_model` is a no-op when a fleet is configured;
-   `state.search()`'s `LIKE` fallback returns placeholder columns and ignores
-   `variant_id`/`best_id`/`chosen_id`; `memory search` ignores queries shorter than
-   three characters; `ScriptExecutor(shell=False)` splits a string command per
-   character.
+6. **The static baseline is a heuristic.** `def test_*` counting does not see
+   parametrisation, so a badly under-counted baseline can still let a test be
+   removed; it only ever raises the baseline, never lowers it.
 
 ## Running safely today
 
