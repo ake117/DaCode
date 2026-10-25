@@ -238,7 +238,13 @@ def _bind_candidates(path: Path, *, home: Path | None = None) -> list[Path]:
             out.append(real)
         prefix = real.parent.parent  # <prefix>/bin/python → <prefix>
         if prefix.exists() and not _exposes_home(prefix):
-            out.append(prefix)
+            # Never bind a top-level directory of $HOME (~/.local, ~/.hermes) just
+            # because a symlink resolved inside it: that exposes the state store and
+            # anything else kept there. Bind the immediate parent instead.
+            if prefix.parent == home_path:
+                out.append(real.parent)
+            else:
+                out.append(prefix)
     return list(dict.fromkeys(out))
 
 

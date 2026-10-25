@@ -117,12 +117,26 @@ class GitSandbox:
         return path
 
     def checkpoint(self, task_id: str, message: str) -> str:
-        """Stage everything in the worktree and commit. Returns the new SHA."""
+        """Stage everything in the worktree and commit. Returns the new SHA.
+
+        This runs on the host, outside any sandbox, so it must not execute anything
+        a trial wrote: a worktree's `.git` is a pointer file, and a trial that
+        replaces it with a directory can ship `core.fsmonitor` or a `pre-commit`
+        hook (external audit, Oct 2026). Hooks are disabled for these calls and a
+        non-file `.git` is refused outright.
+        """
         path = self.worktree_path(task_id)
         if not path.exists():
             raise SandboxError(f"no worktree for task {task_id!r} at {path}")
-        self._git("add", "-A", cwd=path)
-        self._git("commit", "--allow-empty", "-m", message, cwd=path)
+        dot_git = path / ".git"
+        if not dot_git.is_file():
+            raise SandboxError(
+                f"{dot_git} is not a worktree pointer file — refusing to run git hooks "
+                "from a trial-controlled repository"
+            )
+        hardened = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+        self._git(*hardened, "add", "-A", cwd=path)
+        self._git(*hardened, "commit", "--allow-empty", "-m", message, cwd=path)
         return self._git("rev-parse", "HEAD", cwd=path).strip()
 
     def head_sha(self, task_id: str) -> str:

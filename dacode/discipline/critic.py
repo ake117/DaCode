@@ -141,6 +141,7 @@ class PstackCritic:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                env=_gate_env(),
             )
         except IsolationUnavailable as exc:
             return 125, "", f"isolation unavailable: {exc}", 0, 0, 0
@@ -170,6 +171,7 @@ class PstackCritic:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                env=_gate_env(),
             )
         except (OSError, subprocess.TimeoutExpired):
             return None
@@ -195,6 +197,10 @@ class PstackCritic:
         if fnmatch.fnmatch(name, self.test_glob):
             return True
         if any(part in SHADOW_NAMES for part in relative.parts[:-1]):
+            return True
+        if name == "entry_points.txt" or any(
+            part.endswith((".dist-info", ".egg-info")) for part in relative.parts
+        ):
             return True
         if name.endswith(".py") and str(relative.parent) in test_dirs:
             return True
@@ -451,6 +457,7 @@ SHADOW_NAMES: tuple[str, ...] = ("pytest", "_pytest", "pluggy", "py", "sitecusto
 DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "conftest.py",
     "pytest.ini",
+    ".pytest.ini",
     "tox.ini",
     "setup.cfg",
     "pyproject.toml",
@@ -462,6 +469,23 @@ DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "sitecustomize.py",
     "usercustomize.py",
 )
+
+
+def _gate_env() -> dict[str, str]:
+    """Environment for the gate run.
+
+    Plugin autoloading is off by default: a trial can drop a
+    ``*.dist-info/entry_points.txt`` declaring a ``pytest11`` plugin and have it
+    imported before collection, without touching any file the contract lists
+    (external audit, Oct 2026). A repository that genuinely needs an installed
+    plugin autoloaded can set ``DACODE_GATE_PLUGIN_AUTOLOAD=1``.
+    """
+    import os
+
+    env = dict(os.environ)
+    if os.environ.get("DACODE_GATE_PLUGIN_AUTOLOAD", "").lower() not in {"1", "true", "yes"}:
+        env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    return env
 
 
 def _parse_test_counts(stdout: str) -> tuple[int, int, int]:

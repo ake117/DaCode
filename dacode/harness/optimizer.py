@@ -272,7 +272,15 @@ class HarnessOptimizer:
         """Pick the best variant — Jev judgment, LLM-assisted, deterministic fallback."""
         if not variants:
             raise ValueError("compose() called with no variants")
-        ranked = sorted(variants, key=lambda v: v.score or 0.0, reverse=True)
+        # Gate-passing variants are the only candidates when any exist: a judge, an
+        # LLM or the ranking may pick among winners, never over a gate failure.
+        passing = [v for v in variants if v.probe is not None and v.probe.critique_passed]
+        pool = passing or variants
+        ranked = sorted(
+            pool,
+            key=lambda v: (bool(v.probe and v.probe.critique_passed), v.score or 0.0),
+            reverse=True,
+        )
         fallback = ranked[0]
         table = "\n".join(
             f"- id={v.id} label={v.label!r} score={v.score} "
@@ -523,7 +531,13 @@ def _variant_score(result: ProbeResult) -> float:
         base = result.tests_passed / result.tests_total
     bonus = 0.5 if result.critique_passed else 0.0
     exit_penalty = 0.0 if result.exit_code == 0 else 0.25
-    return round(max(0.0, min(1.0, base + bonus - exit_penalty)), 3)
+    score = round(max(0.0, min(1.0, base + bonus - exit_penalty)), 3)
+    # A gate failure must never tie a gate pass: the audit showed an earlier
+    # failing variant keeping 1.0 and winning the stable sort, after which the
+    # passing worktree was cleaned up.
+    if not result.critique_passed:
+        score = min(score, 0.999)
+    return score
 
 
 def _family(model: str) -> str:

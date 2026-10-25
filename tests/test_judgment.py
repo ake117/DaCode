@@ -146,15 +146,33 @@ def _optimizer(judge):
     )
 
 
-def test_compose_prefers_a_confident_judge_pick_over_ranking():
-    winner = _probed("strong", 1.0)
-    other = _probed("weak", 0.5, passed=False)
+def test_the_judge_may_pick_among_passing_variants():
+    strong = _probed("strong", 1.0)
+    other = _probed("also-passing", 0.5)
     judge = _StubJudge(pick=other.id, confidence=0.9)
-    result = _optimizer(judge).compose("add a docstring", [winner, other])
-    assert result is other  # the judge's pick beats the measured ranking
-    assert judge.calls[0]["criteria"].keys() == {winner.id, other.id}
+    result = _optimizer(judge).compose("add a docstring", [strong, other])
+    assert result is other  # among gate passes, judgment decides
     assert "add a docstring" in judge.calls[0]["state"]
-    assert "critique_passed=True" in judge.calls[0]["criteria"][winner.id]
+
+
+def test_the_judge_cannot_pick_a_variant_that_failed_the_gate():
+    """Audit C5: a failing variant used to be offered, and could win."""
+    winner = _probed("strong", 1.0)
+    failing = _probed("tampered", 1.0, passed=False)
+    judge = _StubJudge(pick=failing.id, confidence=0.99)
+    result = _optimizer(judge).compose("add a docstring", [failing, winner])
+    assert result is winner
+    # one candidate left, so the judge is not consulted at all — and the failing
+    # variant is never offered as an option
+    assert not judge.calls
+
+
+def test_when_nothing_passes_the_judge_still_gets_a_choice():
+    first = _probed("a", 0.5, passed=False)
+    second = _probed("b", 0.4, passed=False)
+    judge = _StubJudge(pick=second.id, confidence=0.9)
+    result = _optimizer(judge).compose("task", [first, second])
+    assert result is second
 
 
 def test_compose_falls_back_to_ranking_on_low_confidence():

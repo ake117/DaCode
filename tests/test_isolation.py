@@ -269,3 +269,22 @@ def test_credentials_directories_under_home_are_refused(tmp_path):
         candidate = home / name
         if candidate.exists():
             assert _bind_candidates(candidate), f"{name} must stay bindable"
+
+
+def test_a_symlink_under_a_home_top_level_directory_does_not_expose_it(tmp_path, monkeypatch):
+    """Audit C4: binding real.parent.parent exposed all of ~/.local."""
+    from dacode.sandbox.bwrap import _bind_candidates
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    (home / ".local" / "state").mkdir(parents=True)
+    real = home / ".local" / "bin" / "tool-real"
+    real.write_text("#!/bin/sh\n")
+    link = home / ".local" / "bin" / "tool"
+    link.symlink_to(real)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    binds = _bind_candidates(link)
+
+    assert (home / ".local") not in binds
+    assert binds
