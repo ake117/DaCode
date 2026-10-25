@@ -19,7 +19,7 @@ provider API keys in the environment, and anything reachable over the network.
 | Area | Guarantee | Enforced by |
 |---|---|---|
 | Gate verdict | exit 0 **and** `failed == 0` **and** a non-zero test count | `PstackCritic.review_workspace` |
-| Gate counts | for a pytest command the numbers come from a JUnit report written outside the workspace and parsed on the host; stdout and report must agree, and a green run with no report fails | `_run_once`, `_junit_counts`, `counts_disagree`, `counts_unavailable` |
+| Gate counts | for a pytest command the numbers come from a JUnit report written outside the workspace and parsed on the host; the counts are taken from the report's own `<testcase>` elements **and** cross-checked against the totals it declares, stdout must agree, and a green run with no usable report fails | `_run_once`, `_junit_counts`, `counts_disagree`, `counts_unavailable` |
 | Test integrity | a trial may not change, add or delete `test_*.py`, `conftest*.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `pytest.py`, `sitecustomize.py`, `usercustomize.py`, packaging metadata (`*.dist-info`, `entry_points.txt`), any file in a dedicated test directory, or any path with a shadowing component | `tests_modified`, `tests_infra_modified` |
 | Integrity vs. a commit | the suite is hashed before the trial runs, so an edit, a removal or a new file fails even if the trial commits it or replaces `.git` | `snapshot_contract()` + `_check_contract()` |
 | Suite size | the collected count may not fall below the baseline (dynamic, or the static `def test_*` count when collection fails), skips may not rise | `tests_lost`, `tests_skipped` |
@@ -55,6 +55,15 @@ provider API keys in the environment, and anything reachable over the network.
 6. **The static baseline is a heuristic.** `def test_*` counting does not see
    parametrisation, so a badly under-counted baseline can still let a test be
    removed; it only ever raises the baseline, never lowers it.
+7. **A trial that executes during the suite can forge a consistent result.** Any
+   module the suite imports runs inside the pytest process: it can read
+   `--junitxml` from `sys.argv`, rewrite the report to match a summary it prints,
+   and end the process with status 0. Deriving the counts from `<testcase>` elements
+   and requiring the report to agree with itself defeats the naive rewrite (there is
+   a regression test for exactly that), but a fully fabricated report is
+   indistinguishable from a real one. This is inherent to gating on a repository's
+   own tests — CI has the same property. The gate is a filter, not a proof: test
+   files and gate infrastructure are contract-checked, and the diff still gets read.
 
 ## Running safely today
 

@@ -338,3 +338,67 @@ def test_short_queries_are_searched(tmp_path):
 
     memory = VaultMemory(tmp_path)
     assert memory.retrieve("pi")
+
+
+JUNIT_FAKE = """<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testsuite name="pytest" tests="999" failures="0" errors="0" skipped="0">
+<testcase classname="test_probe" name="test_that_fails" time="0.001">
+<failure message="assert 1 == 2">assert False</failure></testcase>
+</testsuite></testsuites>
+"""
+
+
+def test_a_report_whose_declared_totals_do_not_match_its_testcases_is_rejected(tmp_path):
+    """Audit (Oct 2026): rewriting tests="1" to tests="999" while leaving one
+    <testcase> must not be usable as a report."""
+    from dacode.discipline.critic import _junit_counts
+
+    report = tmp_path / "report.xml"
+    report.write_text(JUNIT_FAKE, encoding="utf-8")
+    assert _junit_counts(report) is None
+
+
+def test_a_consistent_report_still_parses(tmp_path):
+    from dacode.discipline.critic import _junit_counts
+
+    report = tmp_path / "report.xml"
+    report.write_text(
+        '<?xml version="1.0"?><testsuites><testsuite tests="2" failures="1" '
+        'errors="0" skipped="0">'
+        '<testcase name="test_ok" classname="t"/>'
+        '<testcase name="test_bad" classname="t"><failure/></testcase>'
+        "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    assert _junit_counts(report) == (2, 1, 0)
+
+
+def test_a_module_that_rewrites_the_report_at_exit_cannot_win(tmp_path):
+    """End to end: the suite imports app code that rewrites the JUnit file from
+    sys.argv and exits green. The report's own <testcase> count disagrees with the
+    totals it declares, so the gate has no usable report and fails the trial."""
+    (tmp_path / "app.py").write_text(
+        "import atexit\nimport os\nimport pathlib\nimport sys\n\n\n"
+        "def _rewrite():\n"
+        "    for arg in sys.argv:\n"
+        '        if arg.startswith("--junitxml="):\n'
+        '            target = pathlib.Path(arg.split("=", 1)[1])\n'
+        "            if target.is_file():\n"
+        "                text = target.read_text()\n"
+        '                text = text.replace(chr(34) + "1" + chr(34), chr(34) + "999" + chr(34), 1)\n'
+        "                target.write_text(text)\n"
+        '    print("999 passed in 0.01s", flush=True)\n'
+        "    os._exit(0)\n\n\n"
+        "atexit.register(_rewrite)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_probe.py").write_text(
+        "import app\n\n\ndef test_that_fails():\n    assert 1 == 2\n", encoding="utf-8"
+    )
+    _git_baseline(tmp_path)
+
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    report = critic.review_workspace(tmp_path)
+
+    assert report.passed is False
+    assert "counts_unavailable" in {f.check for f in report.findings}

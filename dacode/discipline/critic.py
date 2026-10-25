@@ -577,22 +577,38 @@ def _junit_counts(path: Path) -> tuple[int, int, int] | None:
     """``(total, failed, skipped)`` from a JUnit XML report, or None.
 
     The report is written outside the workspace and parsed here on the host, so the
-    numbers cannot be printed by the code under test (audit C3). A suite may split
-    itself across several <testsuite> elements, so the attributes are summed.
+    numbers cannot be printed by the code under test. Two independent readings must
+    agree: the counts are taken from the ``<testcase>`` elements (one element per
+    test, which is what pytest emits) and cross-checked against the attributes the
+    suite declares. A report whose declared totals do not match its own test cases is
+    not a report — that is exactly the shape of a rewritten one (audit, Oct 2026:
+    a module imported by the suite rewrote tests="1" to tests="999" at exit).
     """
     try:
         tree = xml.parse(path)
     except (OSError, xml.ParseError):
         return None
-    total = failed = skipped = 0
-    roots = tree.getroot()
-    suites = [roots] if roots.tag == "testsuite" else list(roots.iter("testsuite"))
+    root = tree.getroot()
+    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     if not suites:
         return None
+
+    declared_total = declared_failed = declared_skipped = 0
     for suite in suites:
-        total += int(suite.get("tests") or 0)
-        failed += int(suite.get("failures") or 0) + int(suite.get("errors") or 0)
-        skipped += int(suite.get("skipped") or 0)
+        declared_total += int(suite.get("tests") or 0)
+        declared_failed += int(suite.get("failures") or 0) + int(suite.get("errors") or 0)
+        declared_skipped += int(suite.get("skipped") or 0)
+
+    total = failed = skipped = 0
+    for case in root.iter("testcase"):
+        total += 1
+        if case.find("failure") is not None or case.find("error") is not None:
+            failed += 1
+        if case.find("skipped") is not None:
+            skipped += 1
+
+    if (declared_total, declared_failed, declared_skipped) != (total, failed, skipped):
+        return None
     return total, failed, skipped
 
 
