@@ -71,7 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--isolate",
         choices=["none", "bwrap"],
         default=None,
-        help="sandbox trials and the test gate with bubblewrap (default: none)",
+        help="sandbox trials and the test gate with bubblewrap (default: bwrap; "
+        "pass --isolate none to run on the host)",
     )
     run.add_argument(
         "--isolate-network",

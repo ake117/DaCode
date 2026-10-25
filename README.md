@@ -228,6 +228,7 @@ do not own.
 ## Isolation
 
 A worktree gives a trial a private branch, not a private machine. `--isolate bwrap`
+is the default (a host without bubblewrap fails closed; `--isolate none` opts out).
 puts it in namespaces (bubblewrap, no daemon, no root):
 
 ```bash

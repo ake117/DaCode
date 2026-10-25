@@ -39,7 +39,7 @@ that have burned real runs:
 
 - **Interpreter:** trial worktrees do not carry `.venv` (gitignored), so
   `${VIRTUAL_ENV}/bin/python` or an absolute path — never `.venv/bin/python`.
-- **Isolation:** `--isolate bwrap` sandboxes trials and the gate (read-only host,
+- **Isolation:** `--isolate bwrap` is the default and sandboxes trials and the gate (read-only host,
   empty home, no network by default). An agent executor needs
   `--isolate-network`; a test suite should not.
 - **Scope:** one module per run (`dacode/discipline/*`, `dacode/harness/*`,

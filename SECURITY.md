@@ -67,8 +67,10 @@ dacode run "<task>" --executor pi --isolate bwrap --isolate-network \
 # (and read the open items above before pointing it at anything valuable)
 ```
 
-`--isolate` defaults to `none` for compatibility. If you are running tasks you did
-not write, set `DACODE_ISOLATE=bwrap` in your own shell, not in the repo's `.env`.
+`--isolate` defaults to `bwrap`: isolation is the default, not an opt-in. A host
+without bubblewrap or unprivileged user namespaces fails closed (exit 126/125, with
+an explanation) instead of quietly running the trial on the bare machine. Pass
+`--isolate none` (or `DACODE_ISOLATE=none`) when you deliberately want the host.
 
 ## Reporting
 

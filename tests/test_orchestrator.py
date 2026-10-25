@@ -35,7 +35,9 @@ class FakeExecutor:
 
 
 def _rig(repo: Path, vault: Path) -> DaCodeRig:
-    cfg = DaCodeConfig(repo=repo, vault=vault, budget=1)
+    # These tests exercise the loop, not the sandbox: opt out explicitly. The
+    # product default is bwrap now (it must be asked for, not inherited).
+    cfg = DaCodeConfig(repo=repo, vault=vault, budget=1, isolate="none")
     llm = StubLLM(responses={"Propose 2 variants": PROPOSE_JSON}, default="")
     return DaCodeRig(cfg, llm=llm, executor=FakeExecutor("good"))
 
@@ -91,7 +93,7 @@ def test_rig_seeds_context_from_vault(rig_repo, vault):
 
 
 def test_rig_does_not_ingest_when_task_fails(rig_repo, vault):
-    cfg = DaCodeConfig(repo=rig_repo, vault=vault, budget=1)
+    cfg = DaCodeConfig(repo=rig_repo, vault=vault, budget=1, isolate="none")
     llm = StubLLM(responses={"Propose 2 variants": PROPOSE_JSON}, default="")
     rig = DaCodeRig(cfg, llm=llm, executor=FakeExecutor("none-match"))
     result = rig.run_task("implement calc.add")
