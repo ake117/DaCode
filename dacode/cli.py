@@ -318,10 +318,14 @@ def main(argv: list[str] | None = None) -> int:
         if not hits:
             print("no matching notes")
             return 1
+        from dacode.redact import redact
+
         for hit in hits:
-            print(f"[{hit.score:>6}] {hit.title}")
+            # A vault note can contain a key someone pasted into a lesson; the
+            # terminal is an output boundary like any other (audit, Oct 2026).
+            print(f"[{hit.score:>6}] {redact(hit.title)}")
             print(f"          {hit.path}")
-            print(f"          {hit.snippet[:160]}…")
+            print(f"          {redact(hit.snippet[:160])}…")
         return 0
 
     if args.command == "sandbox":

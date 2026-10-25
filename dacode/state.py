@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import os
 import sqlite3
 import threading
 import sys
@@ -87,7 +88,18 @@ def _connect() -> sqlite3.Connection | None:
     target = _path()
     if target is None:
         return None
-    target.parent.mkdir(parents=True, exist_ok=True)
+    parent = target.parent
+    created = not parent.exists()
+    parent.mkdir(parents=True, exist_ok=True)
+    if created:
+        # The runlog is 0700 on every write; the state database used to inherit the
+        # umask here, so a machine with DACODE_RUNLOG=off got a world-readable
+        # directory holding every recorded task (audit, Oct 2026). Only chmod a
+        # directory we just created — never a shared parent.
+        try:
+            os.chmod(parent, 0o700)
+        except OSError:
+            pass
     con = sqlite3.connect(str(target), timeout=5.0)
     con.executescript(_SCHEMA)
     try:

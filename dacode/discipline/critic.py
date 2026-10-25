@@ -410,12 +410,14 @@ class PstackCritic:
             ]
 
         findings: list[Finding] = []
+        test_dirs = self._test_dirs(workspace)
         for line in proc.stdout.splitlines():
             if len(line) < 4:
                 continue
             path = line[3:].strip().strip('"')
             name = Path(path).name
-            if fnmatch.fnmatch(name, self.test_glob):
+            in_test_dir = str(Path(path).parent) in test_dirs
+            if fnmatch.fnmatch(name, self.test_glob) or in_test_dir:
                 findings.append(
                     Finding(
                         check="tests_modified",

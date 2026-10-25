@@ -90,6 +90,18 @@ def load_env(
     if trust is not None:
         trusted = trust
     allowed = None if trusted else set(allow if allow is not None else ENV_ALLOW_LIST)
+    if trusted:
+        # SECURITY.md promises this is "reported on stderr so it is never silent";
+        # it was silent, because the warning below only fires for ignored keys and
+        # nothing is ignored in this mode (audit, Oct 2026).
+        import sys
+
+        print(
+            "[env] DACODE_ENV_TRUST is on: every key in the repository's .env is "
+            "imported, including ones that change how DaCode runs — only do this "
+            "for a repository you own",
+            file=sys.stderr,
+        )
     loaded: dict[str, str] = {}
     ignored: list[str] = []
     for raw in paths:

@@ -402,3 +402,55 @@ def test_a_module_that_rewrites_the_report_at_exit_cannot_win(tmp_path):
 
     assert report.passed is False
     assert "counts_unavailable" in {f.check for f in report.findings}
+
+
+def test_env_trust_announces_itself(tmp_path, capsys):
+    """SECURITY.md says the escape hatch is reported on stderr; it was silent."""
+    from dacode.env import load_env
+
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("DACODE_ISOLATE=none\nOPENROUTER_API_KEY=sk-test\n", encoding="utf-8")
+
+    loaded = load_env(str(dotenv), trust=True)
+
+    err = capsys.readouterr().err
+    assert "DACODE_ENV_TRUST" in err
+    assert "DACODE_ISOLATE" in loaded  # everything is imported in this mode
+
+
+def test_the_state_directory_is_private(tmp_path, monkeypatch):
+    """The state database used to inherit the umask when the runlog never ran."""
+    import os
+    import stat
+
+    from dacode import state
+
+    db = tmp_path / "nested" / "deeper" / "memory.db"
+    monkeypatch.setenv("DACODE_MEMORY_DB", str(db))
+
+    con = state._connect()
+    assert con is not None
+    con.close()
+
+    mode = stat.S_IMODE(os.stat(db.parent).st_mode)
+    assert mode == 0o700
+
+
+def test_a_new_file_in_a_test_directory_fails_without_a_snapshot(tmp_path):
+    """The git-status fallback only looked at test_*.py and the gate infra names,
+    so `tests/helper.py` written by a trial passed unnoticed (audit, Oct 2026)."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text(
+        "def test_ok():\n    assert 1 + 1 == 2\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "conftest_helper.py").write_text("X = 1\n", encoding="utf-8")
+    _git_baseline(tmp_path)
+
+    # the trial adds a helper that the existing conftest could import
+    (tmp_path / "tests" / "helper.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    report = critic.review_workspace(tmp_path)
+
+    assert report.passed is False
+    assert "tests_modified" in {f.check for f in report.findings}

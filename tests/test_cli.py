@@ -58,3 +58,21 @@ def test_run_command_with_script_executor_end_to_end(rig_repo, vault, capsys):
     assert "PASS" in out
     # the base checkout is never modified — only the trial worktree is
     assert not (rig_repo / "calc.py").exists()
+
+
+def test_memory_search_redacts_secrets_in_snippets(rig_repo, vault, capsys):
+    """A key pasted into a vault note must not reach the terminal verbatim."""
+    note = vault / "Resources" / "AI Agents" / "leaky lesson.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(
+        "---\ntitle: Leaky lesson\n---\nThe sandbox key was sk-or-v1-abcdef0123456789 "
+        "and it leaked into a snippet.\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["--repo", str(rig_repo), "--vault", str(vault), "memory", "search", "sandbox key"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "sk-or-v1-abcdef0123456789" not in out
+    assert "[REDACTED]" in out
