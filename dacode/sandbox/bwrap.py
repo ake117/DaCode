@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -84,9 +85,40 @@ class IsolationPolicy:
         )
 
 
-def available() -> bool:
-    """True when bwrap is on PATH (it is a setuid/namespace helper, not a service)."""
-    return shutil.which("bwrap") is not None
+_AVAILABLE: bool | None = None
+
+
+def available(*, probe: bool = True) -> bool:
+    """True when bwrap is present *and* can actually create namespaces.
+
+    Being on PATH is not enough: Ubuntu 24.04 restricts unprivileged user
+    namespaces (AppArmor, ``max_user_namespaces=0``) and containers often block
+    them, in which case every wrapped command would fail with bwrap's own exit
+    code 1 instead of failing closed (external audit, Oct 2026). The probe runs
+    once and is cached.
+    """
+    global _AVAILABLE
+    if _AVAILABLE is not None:
+        return _AVAILABLE
+    binary = shutil.which("bwrap")
+    if binary is None:
+        _AVAILABLE = False
+        return False
+    if not probe:
+        _AVAILABLE = True
+        return True
+    try:
+        proc = subprocess.run(
+            [binary, "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev",
+             "--unshare-pid", "--die-with-parent", "/bin/true"],
+            capture_output=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        _AVAILABLE = False
+        return False
+    _AVAILABLE = proc.returncode == 0
+    return _AVAILABLE
 
 
 def bwrap_version() -> str | None:

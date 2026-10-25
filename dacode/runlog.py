@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -38,17 +39,26 @@ def _path() -> Path | None:
     return default_path()
 
 
+#: Threads probe in parallel; one lock keeps lines whole and the mirror ordered.
+_WRITE_LOCK = threading.Lock()
+
+
 def record(event: dict) -> None:
     """Append one JSON line (timestamped); never raises."""
     try:
         path = _path()
         if path is None:
             return
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            path.parent.chmod(0o700)
+        except OSError:
+            pass
         event = {"ts": time.time(), **event}
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
-        state.ingest(event)  # mirror into memory.db (queryable history)
+        with _WRITE_LOCK:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+            state.ingest(event)  # mirror into memory.db (queryable history)
     except OSError as exc:
         print(f"[runlog] record failed: {exc}", file=sys.stderr)
 

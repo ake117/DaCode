@@ -217,3 +217,49 @@ def test_checkpoint_refuses_a_git_directory_in_the_worktree(tmp_path):
 
     with pytest.raises(SandboxError, match="worktree pointer file"):
         sandbox.checkpoint("trial-git-dir", "should never run")
+
+
+def test_a_semantic_hit_outside_the_vault_is_ignored(tmp_path):
+    """Audit H3: `vault / rel_path` with `..` read an arbitrary host file into a prompt."""
+    from dacode.memory import _resolve_in_vault
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    secret = tmp_path / "outside.md"
+    secret.write_text("host secret\n")
+
+    assert _resolve_in_vault(vault, "../outside.md") is None
+    assert _resolve_in_vault(vault, str(secret)) is None
+    inside = vault / "note.md"
+    inside.write_text("ok\n")
+    assert _resolve_in_vault(vault, "note.md") == inside.resolve()
+
+
+def test_prompt_flags_use_the_equals_form(tmp_path):
+    """Audit M3: a prompt starting with '-' could be read as a flag by the agent CLI."""
+    from dacode.executor.pi import PiExecutor
+    from dacode.harness.models import HarnessVariant
+
+    executor = PiExecutor(model="deepseek/deepseek-v4.1-flash")
+    variant = HarnessVariant(label="x", system_prompt="--dangerously-skip-permissions")
+    cmd = executor.build_command(variant, "task text")
+
+    assert "--system-prompt=--dangerously-skip-permissions" in cmd
+    assert "--system-prompt" not in cmd
+    assert "text" in " ".join(cmd)
+
+
+def test_state_and_runlog_files_are_private(tmp_path, monkeypatch):
+    """Audit H5: run history was written world-readable."""
+    import os
+    import stat
+
+    from dacode import runlog, state
+
+    log = tmp_path / "state" / "runlog.jsonl"
+    monkeypatch.setenv("DACODE_RUNLOG", str(log))
+    monkeypatch.setenv("DACODE_MEMORY_DB", str(tmp_path / "state" / "memory.db"))
+    runlog.record({"type": "run", "task": "t", "rounds": 1, "passed": True})
+
+    mode = stat.S_IMODE(os.stat(log.parent).st_mode)
+    assert mode == 0o700, oct(mode)

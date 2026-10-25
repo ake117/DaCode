@@ -53,9 +53,10 @@ class PiExecutor:
         if self.provider and model:
             cmd += ["--provider", self.provider, "--model", model]
         if variant.system_prompt:
-            cmd += ["--system-prompt", variant.system_prompt]
+            # `=` form: a prompt that starts with "-" must not be read as a flag
+            cmd += [f"--system-prompt={variant.system_prompt}"]
         for snippet in variant.memory_snippets:
-            cmd += ["--append-system-prompt", snippet]
+            cmd += [f"--append-system-prompt={snippet}"]
         if self.tools:
             cmd += ["--tools", ",".join(self.tools)]
         cmd += list(self.extra_args)

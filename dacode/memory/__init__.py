@@ -68,6 +68,24 @@ class Lesson:
     created: str = ""
 
 
+def _resolve_in_vault(vault: Path, relative: str | Path) -> Path | None:
+    """Resolve ``relative`` inside ``vault`` or return None.
+
+    A semantic backend or an embeddings row is untrusted input (it can be a `..`
+    path or an absolute one); without this the note reader would happily return the
+    head of any host file into a prompt.
+    """
+    candidate = Path(relative)
+    if candidate.is_absolute():
+        return None
+    resolved = (vault / candidate).resolve()
+    try:
+        resolved.relative_to(vault.resolve())
+    except ValueError:
+        return None
+    return resolved
+
+
 class VaultMemory:
     """Keyword-retrieval memory backed by a markdown vault."""
 
@@ -204,7 +222,9 @@ class VaultMemory:
                 tags=hit.tags,
             )
         for sem in semantic_hits:
-            target = (self.vault / sem.rel_path)
+            target = _resolve_in_vault(self.vault, sem.rel_path)
+            if target is None:
+                continue
             key = target.resolve()
             base = merged.get(key)
             if base is None:

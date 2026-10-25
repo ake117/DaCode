@@ -171,7 +171,13 @@ class HarnessOptimizer:
                 kwargs["contract"] = contract
             report = self.critic.review_workspace(workspace, **kwargs)
             if report.passed:
-                self.sandbox.checkpoint(trial_id, f"dacode: {variant.label} passed ({trial_id})")
+                # git worktree add/remove and checkpoint all touch the shared .git;
+                # run them one at a time or a lock contention surfaces as a fake
+                # "trial error" on a probe that already passed (audit H2).
+                with self._sandbox_lock:
+                    self.sandbox.checkpoint(
+                        trial_id, f"dacode: {variant.label} passed ({trial_id})"
+                    )
             result = ProbeResult(
                 variant_id=variant.id,
                 workspace=str(workspace),

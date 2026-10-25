@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import sys
 import time
 from pathlib import Path
@@ -138,12 +139,25 @@ def _migrate(con) -> None:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
 
 
+#: One writer at a time: --parallel probes would otherwise race on executescript
+#: and on the ALTER TABLE in _migrate().
+_INGEST_LOCK = threading.Lock()
+
+
 def ingest(event: dict) -> None:
     """Mirror one runlog event into the store; never raises."""
     try:
-        con = _connect()
-        if con is None:
-            return
+        with _INGEST_LOCK:
+            con = _connect()
+            if con is None:
+                return
+            _do_ingest(con, event)
+    except sqlite3.Error as exc:
+        print(f"[state] ingest failed: {exc}", file=sys.stderr)
+
+
+def _do_ingest(con, event: dict) -> None:
+    try:
         with con:
             _migrate(con)
             kind = event.get("type")
