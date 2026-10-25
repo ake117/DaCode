@@ -323,3 +323,52 @@ def test_run_without_judge_never_flags_human_review(rig_repo):
     result = opt.run("implement calc.add")
     assert result.rounds == 2
     assert result.needs_human_review is False
+
+
+class _PinnedJudge:
+    """A judge that names one specific variant id, whatever the grammar allows."""
+
+    name = "pinned"
+
+    def __init__(self, variant_id: str):
+        self.variant_id = variant_id
+
+    def choice(self, *, state, instructions, criteria):
+        return self.variant_id, 0.99
+
+
+class _PinnedLLM:
+    """A compose LLM that answers with a fixed best_id."""
+
+    name = "pinned"
+
+    def __init__(self, variant_id: str):
+        self.variant_id = variant_id
+
+    def complete(self, system, user):
+        return f'{{"best_id": "{self.variant_id}", "reason": "because"}}'
+
+
+def test_a_judge_cannot_pick_a_gate_failing_variant():
+    """Audit (DeepSeek v4-pro, 2026-10-25): compose() resolved judge ids against
+    `variants`, so naming a failing id handed the run to it despite `pool`."""
+    strong = _probed("strong", 1.0, passed=True)
+    weaker = _probed("weaker", 0.8, passed=True)   # two passes, so the judge runs
+    bad = _probed("bad", 0.9, passed=False)
+    optimizer = _optimizer(_PinnedJudge(bad.id))
+
+    chosen = optimizer.compose("task", [strong, weaker, bad])
+
+    assert chosen is strong
+    assert chosen.probe.critique_passed is True
+
+
+def test_the_llm_pick_cannot_choose_a_gate_failing_variant():
+    good = _probed("good", 1.0, passed=True)
+    bad = _probed("bad", 0.9, passed=False)
+    optimizer = _optimizer(judge=None)
+    optimizer.llm = _PinnedLLM(bad.id)
+
+    chosen = optimizer.compose("task", [good, bad])
+
+    assert chosen is good

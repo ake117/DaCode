@@ -344,7 +344,10 @@ class HarnessOptimizer:
                 print(f"[judge] jev pick failed: {exc}", file=sys.stderr)
                 pick = None
             if pick is not None:
-                candidate = next((v for v in variants if v.id == pick), None)
+                # Resolve inside `ranked`, not `variants`: a judge that names a
+                # gate-failing id must not be able to hand the run to it (the pool
+                # above exists for exactly this reason).
+                candidate = next((v for v in ranked if v.id == pick), None)
                 if candidate is not None:
                     chosen, chooser = candidate, "judge"
         if chooser == "ranking":
@@ -353,7 +356,7 @@ class HarnessOptimizer:
                 raw = self.llm.complete(_COMPOSE_SYSTEM, user)
                 data = _parse_json_object(raw)
                 candidate = next(
-                    (v for v in variants if v.id == str(data.get("best_id", ""))), None
+                    (v for v in ranked if v.id == str(data.get("best_id", ""))), None
                 )
                 if candidate is not None:
                     chosen, chooser = candidate, "llm"
