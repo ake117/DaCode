@@ -467,3 +467,13 @@ def test_phpunit_summaries_are_counted():
     assert _parse_test_counts("OK (17 tests, 46 assertions)") == (17, 0, 0)
     # pytest must keep working through the same function
     assert _parse_test_counts("3 passed, 1 failed in 0.2s") == (4, 1, 0)
+
+
+def test_coloured_phpunit_summary_is_still_counted():
+    """PHPUnit paints its summary line, and the escape ends in a letter — so ``\\bTests:``
+    never matched and a fully reported suite counted as zero tests (Oct 2026)."""
+    from dacode.discipline.critic import _parse_test_counts
+
+    coloured = "\x1b[37;41mTests: 23\x1b[0m\x1b[37;41m, Assertions: 65\x1b[0m\x1b[37;41m, Failures: 2\x1b[0m\x1b[37;41m, Deprecations: 6\x1b[0m\x1b[37;41m.\x1b[0m"
+    assert _parse_test_counts(coloured) == (23, 2, 0)
+    assert _parse_test_counts("\x1b[32mOK (17 tests, 46 assertions)\x1b[0m") == (17, 0, 0)

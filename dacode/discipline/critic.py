@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 import subprocess
 import tempfile
 import xml.etree.ElementTree as xml
@@ -642,7 +643,7 @@ def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
 
     total, failed = _parse_test_summary(stdout)
     skipped = 0
-    for line in reversed(stdout.splitlines()):
+    for line in reversed(_strip_ansi(stdout).splitlines()):
         stripped = line.strip().strip("=").strip()
         if not stripped:
             continue
@@ -657,6 +658,19 @@ def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
                     skipped = int(match.group(1))
             break
     return total, failed, skipped
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove colour escapes before parsing.
+
+    PHPUnit paints its summary line: ``\\x1b[37;41mTests: 23\\x1b[0m...``. The escape
+    ends in a letter, so ``\\bTests:`` never matches and a fully reported suite counts
+    as 0 tests (verified against a real PHP project, Oct 2026).
+    """
+    return _ANSI_RE.sub("", text)
 
 
 def _parse_test_summary(stdout: str) -> tuple[int, int]:
@@ -675,7 +689,7 @@ def _parse_test_summary(stdout: str) -> tuple[int, int]:
     """
     import re
 
-    for line in reversed(stdout.splitlines()):
+    for line in reversed(_strip_ansi(stdout).splitlines()):
         stripped = line.strip().strip("=").strip()
         if not stripped:
             continue
