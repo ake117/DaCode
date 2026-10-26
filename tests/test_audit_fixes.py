@@ -454,3 +454,16 @@ def test_a_new_file_in_a_test_directory_fails_without_a_snapshot(tmp_path):
 
     assert report.passed is False
     assert "tests_modified" in {f.check for f in report.findings}
+
+
+def test_phpunit_summaries_are_counted():
+    """A PHP suite prints "Tests: 23, Assertions: 65, Failures: 2." — that shape was
+    invisible to the parser, so a PHP repo gated with `error:no_tests` (Oct 2026)."""
+    from dacode.discipline.critic import _parse_test_counts
+
+    assert _parse_test_counts("Tests: 23, Assertions: 65, Failures: 2, Deprecations: 6.") == (23, 2, 0)
+    assert _parse_test_counts("Tests: 4, Assertions: 9, Failures: 0, Errors: 1.") == (4, 1, 0)
+    assert _parse_test_counts("Tests: 4, Assertions: 9, Skipped: 1.") == (4, 0, 1)
+    assert _parse_test_counts("OK (17 tests, 46 assertions)") == (17, 0, 0)
+    # pytest must keep working through the same function
+    assert _parse_test_counts("3 passed, 1 failed in 0.2s") == (4, 1, 0)

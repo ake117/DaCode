@@ -646,10 +646,15 @@ def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
         stripped = line.strip().strip("=").strip()
         if not stripped:
             continue
-        if re.search(r"\d+\s+(passed|failed|checks?\b)", stripped) or "skipped" in stripped:
+        if re.search(r"\d+\s+(passed|failed|checks?\b)", stripped, re.I) or "skipped" in stripped.lower():
             match = re.search(r"(\d+)\s+skipped", stripped)
             if match:
                 skipped = int(match.group(1))
+            else:
+                # PHPUnit spells it "Skipped: 1", not "1 skipped".
+                match = re.search(r"\bSkipped:\s*(\d+)", stripped)
+                if match:
+                    skipped = int(match.group(1))
             break
     return total, failed, skipped
 
@@ -674,6 +679,20 @@ def _parse_test_summary(stdout: str) -> tuple[int, int]:
         stripped = line.strip().strip("=").strip()
         if not stripped:
             continue
+        # PHPUnit: "Tests: 23, Assertions: 65, Failures: 2, Errors: 0, Skipped: 1."
+        m = re.search(r"\bTests:\s*(\d+)", stripped)
+        if m:
+            total = int(m.group(1))
+            failed = 0
+            for key in ("Failures", "Errors"):
+                sub = re.search(rf"\b{key}:\s*(\d+)", stripped)
+                if sub:
+                    failed += int(sub.group(1))
+            return total, failed
+        # PHPUnit, everything green: "OK (17 tests, 46 assertions)"
+        m = re.search(r"\bOK\b.*?\((\d+)\s+tests?", stripped)
+        if m:
+            return int(m.group(1)), 0
         # "N checks, M failed"
         m = re.search(r"(\d+)\s+checks?\s*,\s*(\d+)\s+failed", stripped)
         if m:
