@@ -9,7 +9,7 @@ Deliberately stdlib-only: MCP over stdio is newline-delimited JSON-RPC 2.0, and 
 few hundred lines with no dependency is easier to trust than a framework that
 needs its own release cadence.
 
-    dacode mcp --vault ~/Documents/ake_obsidian
+    dacode mcp --vault ~/Documents/Vault
     {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 """
 

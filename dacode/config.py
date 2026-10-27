@@ -80,5 +80,11 @@ def _env_test_command() -> tuple[str, ...] | None:
 
 
 def _default_vault() -> str | None:
-    candidate = Path.home() / "Documents" / "ake_obsidian"
-    return str(candidate) if candidate.is_dir() else None
+    for candidate in (
+        Path.home() / "Documents" / "Vault",
+        Path.home() / "Vault",
+    ):
+        if candidate.is_dir():
+            return str(candidate)
+    return None
+

@@ -301,8 +301,8 @@ each model's pass rate and suggests dropping a model that keeps losing.
 stdlib only, no extra dependency):
 
 ```bash
-dacode --vault ~/Documents/ake_obsidian mcp            # semantic search if an embedder is configured
-dacode --vault ~/Documents/ake_obsidian mcp --keyword-only   # no network calls
+dacode --vault ~/Documents/Vault mcp            # semantic search if an embedder is configured
+dacode --vault ~/Documents/Vault mcp --keyword-only   # no network calls
 ```
 
 Tools: `memory_search` (lessons), `run_history` (FTS over past runs), `failures`,
