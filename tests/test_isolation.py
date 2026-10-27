@@ -112,6 +112,7 @@ def test_interpreter_root_finds_an_absolute_python():
 
 def test_pi_executor_reports_a_missing_sandbox_instead_of_running(monkeypatch, tmp_path):
     monkeypatch.setattr(bwrap_mod, "available", lambda: False)
+    monkeypatch.setattr("dacode.executor.pi.shutil.which", lambda cmd: f"/usr/bin/{cmd}")
     executor = PiExecutor(isolation=IsolationPolicy(enabled=True))
     result = executor.run(_variant(), tmp_path)
     assert result.exit_code == 126
