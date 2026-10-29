@@ -1,7 +1,7 @@
 # Design docs — where the idea came from
 
-Verbatim copies of the two Thai notes this repository grew out of (kept exactly as
-they live in the Obsidian vault, Obsidian callouts and wikilinks included).
+Verbatim copies of the two Thai notes this repository grew out of, with personal
+names, machine names and vault-only wikilinks anonymised out.
 
 | File | What it is |
 |---|---|

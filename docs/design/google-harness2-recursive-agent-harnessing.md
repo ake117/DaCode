@@ -54,7 +54,7 @@ Harness² เชื่อมโยง **2 ระดับของการว�
 
 ---
 
-## 💡 นัยต่อการพัฒนา Agent (มุมมองแคลร์)
+## 💡 นัยต่อการพัฒนา Agent (มุมมองผู้จดบันทึก)
 
 - **อนาคตของ AI Agents:** ก้าวข้ามยุค "Static Prompting" สู่ยุค **Self-Evolving Agents** ที่ Agent สามารถปรับแต่งเครื่องมือและทักษะรอบตัวเพื่อแก้โจทย์แปลกใหม่ได้เองหน้างาน (Test-time compute optimization)
 - **การประยุกต์ใช้:** แนวคิด Propose-Probe-Compose สามารถนำไปประยุกต์เขียน Auto-loop ให้กับ coding agents ต่าง ๆ (เช่น Pi coding agent หรือ Hermes เอง) เพื่อให้ระบบแก้บั๊กและเรียนรู้จากความผิดพลาดได้อัตโนมัติ
@@ -63,10 +63,7 @@ Harness² เชื่อมโยง **2 ระดับของการว�
 
 ## 🔗 Related
 
-- [[Google Harness2 vs DeepSeek Harness (DSH) — เปรียบเทียบ]] — เทียบระเบียบวิธี Harness² กับ runtime dsh (คนละชั้นสถาปัตยกรรม)
-- [[REA - Reverse Engineer Anything (MCP)]] — เครื่องมือและแนวคิด Agentic Tooling
-- [[HyperFrames - Write HTML Render Video]] — ตัวอย่าง Agent-driven workflow อีกรูปแบบ
-- [[mattpocock-skill-vps]] — ชุด Skills และการจัดการความรู้ของ Agent
+- DeepSeek Harness (DSH) — เทียบระเบียบวิธี Harness² กับ runtime dsh (คนละชั้นสถาปัตยกรรม)
 
 ## 📚 Sources
 

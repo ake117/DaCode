@@ -78,11 +78,9 @@ aliases:
 
 ## 🔗 Related
 
-- [[DaCode - Autonomous Engineering Rig]] — **สร้างแล้ว 20 ต.ค. 2026** (`~/AI_Projects/DaCode`, 5 layer ครบ + 50 tests)
-- [[Google Harness2 - Recursive Agent Harnessing]]
-- [[REA - Reverse Engineer Anything (MCP)]]
-- [[mattpocock-skill-terminus]]
+- Google Harness2 — Recursive Agent Harnessing (โน้ตถัดไปในโฟลเดอร์นี้)
+- DaCode — โปรเจกต์ที่ blueprint นี้กลายเป็นจริง
 
 ## 📚 Sources
 
-- การระดมความคิดร่วมกันระหว่างพี่เอกและแคลร์ (18 ตุลาคม 2026)
+- การระดมความคิดร่วมกันระหว่างผู้ใช้กับ AI assistant (18 ตุลาคม 2026)
