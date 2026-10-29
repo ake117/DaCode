@@ -66,38 +66,13 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-Runtime needs: `git`, `pi` (Pi coding agent) on `PATH`, and a provider key —
+Runtime needs: `git`, [`pi`](docs/installing-pi.md) on `PATH`, and a provider key —
 OpenRouter (`OPENROUTER_API_KEY`) or Z.ai (`GLM_API_KEY`, see
 [AI providers](#ai-providers)).
 
-### Installing Pi
-
-`pip install -e` does **not** install Pi — it is a separate Node.js program. Without it
-on `PATH`, the Pi executor exits `127` and the run looks like a mysterious failure.
-
-```bash
-curl -fsSL https://pi.dev/install.sh | sh     # pinned install; update with `pi update`
-# or, if you manage Node yourself:
-# npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-
-pi --version                                   # 1.2 or newer
-```
-
-Pi requires Node.js 22.19 or newer (the installer can install Node for you). Authenticate
-once and check it:
-
-```bash
-pi auth check --provider openrouter
-```
-
-Under `--isolate bwrap` (the default) DaCode masks `~/.pi/agent/auth.json` inside the
-sandbox and hands Pi the provider key through the environment instead. Use
-`--isolate-network` and keep `OPENROUTER_API_KEY` in the environment (or in the target
-repository's `.env`) — without either, Pi has no key and no network and the trial fails.
-
-Quick triage: `exit 127` means Pi is not on `PATH`; `pi auth check` saying `ready` while
-`pi --print` answers **402** means the provider account is out of credits (Pi asks for a
-large `max_tokens`, so a small balance is not enough) — neither is a DaCode bug.
+Pi (`--executor pi`) is a separate Node.js program — install it before the first
+run: **[docs/installing-pi.md](docs/installing-pi.md)** (install, authentication
+under the sandbox, and the 127 / 402 triage table).
 
 Optional: a TypeSafe key in `JEV_API_KEY` for `--judge jev` — the System One
 decision model that picks the Compose winner (fast, typed answers with
