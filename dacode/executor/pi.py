@@ -45,7 +45,15 @@ class PiExecutor:
         self.isolation = isolation
 
     def _resolve_binary(self) -> str | None:
-        return shutil.which(self.binary)
+        """The real binary, symlinks resolved.
+
+        bwrap makes $HOME a tmpfs, so a launcher symlink like ``~/bin/pi``
+        (pointing into ``~/.pi/agent/bin``) dangles inside the sandbox and
+        ``execvp`` fails with a bare "No such file or directory". Executing the
+        resolved path works because the rig binds the real location read-only.
+        """
+        found = shutil.which(self.binary)
+        return os.path.realpath(found) if found else None
 
     def build_command(self, variant: "HarnessVariant", task: str) -> list[str]:
         cmd = [self.binary, "--print", "--mode", "text"]
@@ -53,10 +61,18 @@ class PiExecutor:
         if self.provider and model:
             cmd += ["--provider", self.provider, "--model", model]
         if variant.system_prompt:
-            # `=` form: a prompt that starts with "-" must not be read as a flag
-            cmd += [f"--system-prompt={variant.system_prompt}"]
+            # Space form: pi 1.4 rejects the `--opt=value` spelling. A prompt
+            # that starts with "-" gets a leading newline so no parser, on any
+            # version, can read it as a flag (audit M3, resurfaced on 1.4).
+            prompt = ("\n" + variant.system_prompt
+                      if variant.system_prompt.startswith("-") else variant.system_prompt)
+            cmd += ["--system-prompt", prompt]
         for snippet in variant.memory_snippets:
-            cmd += [f"--append-system-prompt={snippet}"]
+            snippet = "\n" + snippet if snippet.startswith("-") else snippet
+            cmd += ["--append-system-prompt", snippet]
+        # A trial is one-shot and the sandbox binds ~/.pi read-only, so there is
+        # nowhere to save a session — and no reason to keep one.
+        cmd.append("--no-session")
         if self.tools:
             cmd += ["--tools", ",".join(self.tools)]
         cmd += list(self.extra_args)
@@ -71,14 +87,28 @@ class PiExecutor:
                 command="",
             )
         cmd = self.build_command(variant, variant.payload.get("task", ""))
+        resolved = self._resolve_binary()
+        if resolved:
+            # Exec the real file: see _resolve_binary for why the PATH name is
+            # not trustworthy inside the sandbox.
+            cmd[0] = resolved
         if self.isolation is not None and self.isolation.enabled:
             # The agent needs its own binary, config and (to reach a model) the
             # network; everything else stays hidden.
             binary_path = self._resolve_binary()
+            import dataclasses
+
             policy = self.isolation.with_paths(
                 Path(binary_path).resolve().parent if binary_path else None,
-                Path.home() / ".pi",
                 os.environ.get("NODE_PATH"),
+            )
+            # pi 1.4 takes a lock file next to everything it reads (settings,
+            # auth, models), so a read-only ~/.pi breaks even reading. Mount the
+            # agent directory writable; auth.json is still masked by the policy's
+            # hidden_files, which wrap_command applies after writable binds.
+            policy = dataclasses.replace(
+                policy,
+                writable_paths=policy.writable_paths + (Path.home() / ".pi",),
             )
             try:
                 cmd = wrap_command(cmd, workspace=workspace, policy=policy)

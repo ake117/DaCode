@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -199,23 +200,48 @@ def wrap_command(
     # /var/tmp keeps other processes' droppings; neither belongs in a trial.
     argv += ["--tmpfs", "/run", "--tmpfs", "/var/tmp"]
 
+    # A networked trial needs name resolution. On systemd-resolved hosts
+    # /etc/resolv.conf is a symlink into /run — which the sandbox just replaced
+    # with an empty tmpfs — so the name dangles and DNS dies. Bind the real
+    # directory back over the tmpfs (a file bind onto the dangling symlink name
+    # fails: bwrap cannot create through it). Regular-file hosts need nothing.
+    if policy.network:
+        resolv = Path("/etc/resolv.conf")
+        try:
+            target = resolv.resolve(strict=True)
+        except OSError:
+            target = resolv
+        if target.is_file() and target.parent != Path("/etc"):
+            argv += ["--ro-bind", str(target.parent), str(target.parent)]
+
     for path in policy.read_only_paths:
         for candidate in _bind_candidates(Path(path).expanduser(), home=home_path):
             argv += ["--ro-bind", str(candidate), str(candidate)]
 
-    # Files the policy hides are replaced by /dev/null, so a repository's own .env
-    # (or an agent's auth file) is invisible even though its parent is mounted.
-    for hidden in policy.hidden_files:
-        target = Path(hidden).expanduser()
-        if target.exists() and not target.is_dir():
-            argv += ["--ro-bind", "/dev/null", str(target.resolve())]
-
-    # The trial workspace is the only writable place that survives the run, plus
-    # the gate's own report directory (which the trial cannot reach).
+    # Writable binds come before the masks: a hidden file inside a writable
+    # directory (the agent's auth.json under a writable ~/.pi) must stay hidden.
     for extra in policy.writable_paths:
         target = Path(extra).expanduser().resolve()
         if target.is_dir():
             argv += ["--bind", str(target), str(target)]
+
+    # Files the policy hides are replaced by an empty regular file, so a
+    # repository's own .env (or an agent's auth file) reads back as empty even
+    # though its parent is mounted. /dev/null cannot be used: a bind of the
+    # character device denies reads outright (EACCES), which readers treat as a
+    # hard error instead of "no secrets here". Masks are emitted last on purpose
+    # — later mounts shadow earlier ones.
+    if any(
+        Path(h).expanduser().exists() and not Path(h).expanduser().is_dir()
+        for h in policy.hidden_files
+    ):
+        fd, empty = tempfile.mkstemp(prefix="dacode-empty-mask-")
+        os.close(fd)
+        for hidden in policy.hidden_files:
+            target = Path(hidden).expanduser()
+            if target.exists() and not target.is_dir():
+                argv += ["--ro-bind", empty, str(target.resolve())]
+
     argv += ["--bind", str(workspace_path), str(workspace_path)]
     argv += ["--chdir", str(workspace_path)]
 

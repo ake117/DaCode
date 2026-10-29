@@ -186,7 +186,14 @@ class PstackCritic:
         if _pytest_like(cmd):
             junit_dir = Path(tempfile.mkdtemp(prefix="dacode-junit-"))
             junit = junit_dir / "report.xml"
-            cmd = [*cmd, f"--junitxml={junit}"]
+            if len(cmd) >= 3 and cmd[0] == "bash" and cmd[1] == "-c":
+                # `bash -c '<script>' --junitxml=…` hands the flag to bash as a
+                # positional, not to pytest — the report never gets written and
+                # every green run reads as counts_unavailable. Put the flag
+                # inside the script where the test runner can see it.
+                cmd[2] = f"{cmd[2]} --junitxml={junit}"
+            else:
+                cmd = [*cmd, f"--junitxml={junit}"]
             if policy is not None and policy.enabled:
                 policy = dataclass_replace(
                     policy, writable_paths=(*policy.writable_paths, junit_dir)
@@ -309,7 +316,11 @@ class PstackCritic:
             if not path.is_file():
                 continue
             relative = path.relative_to(root)
-            if ".git" in relative.parts:
+            # Interpreter caches appear the moment *any* pytest runs — including
+            # the trial's own — and are not suite logic: a stale .pyc is ignored
+            # while its source differs, and source-less imports do not load from
+            # __pycache__. Contract-hashing them fails every honest trial.
+            if any(part in {".git", "__pycache__", ".pytest_cache"} for part in relative.parts):
                 continue
             if not self._is_contract_path(relative, test_dirs=self._test_dirs(root)):
                 continue
@@ -416,6 +427,10 @@ class PstackCritic:
             if len(line) < 4:
                 continue
             path = line[3:].strip().strip('"')
+            # same carve-out as snapshot_contract: bytecode caches appear the
+            # moment any pytest (the trial's own included) touches the tree
+            if any(part in {"__pycache__", ".pytest_cache"} for part in Path(path).parts):
+                continue
             name = Path(path).name
             in_test_dir = str(Path(path).parent) in test_dirs
             if fnmatch.fnmatch(name, self.test_glob) or in_test_dir:

@@ -235,8 +235,10 @@ def test_a_semantic_hit_outside_the_vault_is_ignored(tmp_path):
     assert _resolve_in_vault(vault, "note.md") == inside.resolve()
 
 
-def test_prompt_flags_use_the_equals_form(tmp_path):
-    """Audit M3: a prompt starting with '-' could be read as a flag by the agent CLI."""
+def test_prompt_flags_survive_dash_leading_prompts(tmp_path):
+    """Audit M3, revisited for pi 1.4: the `--opt=value` spelling is rejected by
+    the new CLI parser, so prompts travel as separate argv items — and a prompt
+    starting with '-' gets a leading newline so no version reads it as a flag."""
     from dacode.executor.pi import PiExecutor
     from dacode.harness.models import HarnessVariant
 
@@ -244,9 +246,11 @@ def test_prompt_flags_use_the_equals_form(tmp_path):
     variant = HarnessVariant(label="x", system_prompt="--dangerously-skip-permissions")
     cmd = executor.build_command(variant, "task text")
 
-    assert "--system-prompt=--dangerously-skip-permissions" in cmd
-    assert "--system-prompt" not in cmd
-    assert "text" in " ".join(cmd)
+    assert "--system-prompt" in cmd
+    flag_index = cmd.index("--system-prompt")
+    assert cmd[flag_index + 1].lstrip("\n").startswith("--dangerously-skip-permissions")
+    assert not any(token.startswith("--system-prompt=") for token in cmd)
+    assert "task text" in " ".join(cmd)
 
 
 def test_state_and_runlog_files_are_private(tmp_path, monkeypatch):
