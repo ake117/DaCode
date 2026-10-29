@@ -70,6 +70,10 @@ appended after `bash -c` never reaching pytest (put it inside the script).
 Bytecode caches (`__pycache__`, `.pytest_cache`) are carved out of contract and
 fallback integrity checks — they appear the moment any pytest runs.
 
+Live monitoring: `dacode watch` — a read-only tail of the runlog (in-progress run,
+probes, findings, pass history). `q` quits, `--once` renders a single frame. It never
+writes anything and never judges — the gate owns verdicts, the watch is a window.
+
 Triage: `127` = Pi not on PATH; `ready` from auth check but `402` on `--print` =
 provider credit exhausted — the catalog gives deepseek-v4.1-flash `maxTokens: 943718`,
 so cap it in `~/.pi/agent/models.json` under `providers.openrouter.modelOverrides`

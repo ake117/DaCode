@@ -86,6 +86,9 @@ probabilities; it never issues pass/fail verdicts).
 # show layer health
 .venv/bin/dacode --repo . layers
 
+# watch the rig work (live, read-only — the log is the only thing it touches)
+.venv/bin/dacode watch                      # follow; `q` quits; --once renders one frame
+
 # run a task through the full rig (Pi as executor, DeepSeek v4.1 Flash)
 OPENROUTER_API_KEY=... .venv/bin/dacode run "add a slugify() helper with tests" --budget 2
 

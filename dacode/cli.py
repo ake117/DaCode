@@ -116,6 +116,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the semantic index (no embedding calls; keyword scoring only)",
     )
 
+    watch = sub.add_parser("watch", help="live read-only view of the run log")
+    watch.add_argument("--runlog", default=None,
+                       help="runlog path (default: DACODE_RUNLOG or ~/.local/state/dacode/runlog.jsonl)")
+    watch.add_argument("--interval", type=float, default=2.0, help="repaint period in seconds")
+    watch.add_argument("--history", type=int, default=10, help="finished runs to show below the live one")
+    watch.add_argument("--once", action="store_true", help="render one frame and exit (no follow)")
+
     retro = sub.add_parser("retro", help="read the runlog and suggest harness changes")
     retro.add_argument("--days", type=int, default=14, help="look back this many days (default: 14)")
     retro.add_argument("--task", default=None, help="filter by task substring")
@@ -279,6 +286,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         else:
             print(retro.render_text(report))
+        return 0
+
+    if args.command == "watch":
+        from dacode.watch import watch
+        frame = watch(path=Path(args.runlog).expanduser() if args.runlog else None,
+                      interval=args.interval, history=args.history, once=args.once)
+        if args.once:
+            print(frame)
         return 0
 
     if args.command == "layers":
