@@ -294,6 +294,11 @@ runs inside the critic.
 
 ---
 
+## FAQ
+
+Common questions and the failures you meet in the first week, answered from real
+use: [docs/FAQ.md](docs/FAQ.md).
+
 ## Design principles
 
 The idea behind this rig is written down in [docs/design/](docs/design/) — the
