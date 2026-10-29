@@ -296,6 +296,9 @@ runs inside the critic.
 
 ## Design principles
 
+The idea behind this rig is written down in [docs/design/](docs/design/) — the
+original blueprint and the Harness² research note it grew from.
+
 Built to the pstack rules:
 
 * **Test behaviour, not implementation** — `discipline/checks.py` flags
