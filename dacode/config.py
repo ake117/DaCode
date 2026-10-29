@@ -21,6 +21,7 @@ class DaCodeConfig:
     base_url: str | None = None
 
     executor: str = "pi"  # "pi" | "script"
+    executor_provider: str = "openrouter"  # provider id the pi executor authenticates with
     script_command: str | None = None
 
     budget: int = 2
@@ -49,6 +50,7 @@ class DaCodeConfig:
             llm_kind=os.environ.get("DACODE_LLM", "openrouter"),
             model=os.environ.get("DACODE_MODEL", "deepseek/deepseek-v4.1-flash"),
             executor=os.environ.get("DACODE_EXECUTOR", "pi"),
+            executor_provider=os.environ.get("DACODE_EXECUTOR_PROVIDER", "openrouter"),
             budget=int(os.environ.get("DACODE_BUDGET", "2")),
             variants_per_round=int(os.environ.get("DACODE_VARIANTS", "2")),
             semantic=os.environ.get("DACODE_SEMANTIC", "auto"),

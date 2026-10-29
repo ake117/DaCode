@@ -91,6 +91,7 @@ class DaCodeRig:
                 isolation=self.isolation,
             )
         return PiExecutor(
+            provider=self.config.executor_provider,
             model=self.config.model,
             timeout=self.config.variant_timeout,
             isolation=self.isolation,

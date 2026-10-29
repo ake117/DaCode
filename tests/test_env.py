@@ -106,3 +106,25 @@ def test_ordinary_unknown_keys_are_ignored_without_noise(tmp_path, monkeypatch, 
     loaded = load_env(env)
     assert loaded == {"OPENAI_API_KEY": "k"}
     assert "ignored" not in capsys.readouterr().err
+
+
+def test_the_zai_key_is_a_provider_key(monkeypatch, tmp_path):
+    """GLM_API_KEY is a provider credential: allow-listed, and handed to the
+    executor's sandbox only when the trial is allowed on the network."""
+    from dacode.env import ENV_ALLOW_LIST, load_env
+    from dacode.sandbox.bwrap import NETWORK_ENV, IsolationPolicy, allowed_env
+
+    assert "GLM_API_KEY" in ENV_ALLOW_LIST
+    assert "GLM_API_KEY" in NETWORK_ENV
+
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("GLM_API_KEY=sk-zai-test\n", encoding="utf-8")
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.delenv("DACODE_RUNLOG", raising=False)
+    load_env(str(dotenv))
+    assert os.environ["GLM_API_KEY"] == "sk-zai-test"
+
+    online = IsolationPolicy(enabled=True, network=True)
+    offline = IsolationPolicy(enabled=True, network=False)
+    assert "GLM_API_KEY" in allowed_env(online)
+    assert "GLM_API_KEY" not in allowed_env(offline)

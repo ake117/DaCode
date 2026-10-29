@@ -122,3 +122,17 @@ def test_gate_isolation_hides_the_repository_dotenv(rig_repo, vault, monkeypatch
     assert policy is not None and policy.enabled is True
     hidden = {Path(p).resolve() for p in policy.hidden_files}
     assert (rig_repo / ".env").resolve() in hidden
+
+
+def test_executor_provider_reaches_the_pi_executor(rig_repo, vault):
+    """--executor-provider zai must land on the PiExecutor, not just in the config."""
+    from dacode.config import DaCodeConfig
+    from dacode.orchestrator import DaCodeRig
+
+    cfg = DaCodeConfig(repo=rig_repo, vault=vault, budget=1, isolate="none", executor="pi",
+                       executor_provider="zai")
+    rig = DaCodeRig(cfg)
+    assert rig._build_executor().provider == "zai"
+
+    cfg_default = DaCodeConfig(repo=rig_repo, vault=vault, budget=1, isolate="none", executor="pi")
+    assert DaCodeRig(cfg_default)._build_executor().provider == "openrouter"

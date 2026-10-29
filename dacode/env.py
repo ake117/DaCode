@@ -60,6 +60,7 @@ ENV_ALLOW_LIST: tuple[str, ...] = (
     "GOOGLE_API_KEY",
     "GROQ_API_KEY",
     "DEEPSEEK_API_KEY",
+    "GLM_API_KEY",
     "MISTRAL_API_KEY",
     "XAI_API_KEY",
     "JEV_API_KEY",

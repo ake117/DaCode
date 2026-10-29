@@ -45,6 +45,7 @@ BASE_ENV = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TERM")
 #: Passed only when the caller opts in with ``network=True`` (an agent needs its key).
 NETWORK_ENV = (
     "OPENROUTER_API_KEY",
+    "GLM_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY",

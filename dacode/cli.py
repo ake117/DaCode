@@ -48,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--model", default=None, help="model id for the chosen backend")
     run.add_argument("--executor", default=None, choices=["pi", "script"])
+    run.add_argument(
+        "--executor-provider",
+        default=None,
+        help='provider id the pi executor logs in with, e.g. "zai" (default: openrouter)',
+    )
     run.add_argument("--script-command", default=None, help="command for --executor script")
     run.add_argument(
         "--test-command",
@@ -176,6 +181,8 @@ def _make_config(args) -> DaCodeConfig:
         cfg.model = args.model
     if getattr(args, "executor", None):
         cfg.executor = args.executor
+    if getattr(args, "executor_provider", None):
+        cfg.executor_provider = args.executor_provider
     if getattr(args, "script_command", None):
         cfg.script_command = args.script_command
     if getattr(args, "test_command", None):

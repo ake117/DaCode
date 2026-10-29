@@ -27,6 +27,11 @@ PROVIDERS: dict[str, dict] = {
         "env": "OPENAI_API_KEY",
         "default_model": "gpt-4o-mini",
     },
+    "zai": {
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "env": "GLM_API_KEY",
+        "default_model": "glm-5.3-flash",
+    },
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",
         "env": "ANTHROPIC_API_KEY",
