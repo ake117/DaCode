@@ -10,6 +10,16 @@ task, **probes** each one in its own git worktree, lets an **adversarial critic*
 gate the result against real tests, and **writes the lesson back** to the vault
 so the next run starts smarter. No ground-truth labels required.
 
+## Contents
+
+[The 5-layer stack](#the-5-layer-stack) · [Install](#install) ·
+[Usage](#usage) · [Memory backends](#memory-backends) ·
+[How a run works](#how-a-run-works) · [Isolation](#isolation) ·
+[Tests](#tests) · [FAQ](#faq) · [Going further](#going-further) ·
+[Design principles](#design-principles) ·
+[Working on DaCode itself](#working-on-dacode-itself) ·
+[Status / roadmap](#status--roadmap)
+
 ---
 
 ## The 5-layer stack
@@ -56,8 +66,9 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-Runtime needs: `git`, `pi` (Pi coding agent) on `PATH`, and an OpenRouter key in
-`OPENROUTER_API_KEY`.
+Runtime needs: `git`, `pi` (Pi coding agent) on `PATH`, and a provider key —
+OpenRouter (`OPENROUTER_API_KEY`) or Z.ai (`GLM_API_KEY`, see
+[AI providers](#ai-providers)).
 
 ### Installing Pi
 
@@ -135,6 +146,7 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 | `--llm` | `stub` \| `local` \| any provider preset (table below) | `openrouter` |
 | `--model` | any model id | `deepseek/deepseek-v4.1-flash` |
 | `--executor` | `pi` \| `script` | `pi` |
+| `--executor-provider` | any provider preset — which key the Pi executor authenticates with | `openrouter` |
 | `--judge` | `jev` (unset = off) | off |
 | `--escalate-models` | comma-separated model ladder, e.g. `claude-sonnet-4-5,gpt-4o` | none |
 
@@ -161,6 +173,12 @@ default — see "Memory backends"), `DACODE_EMBED_BASE_URL`, `DACODE_EMBED_MODEL
 | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | `mistral` | `MISTRAL_API_KEY` | `mistral-small-latest` |
 | `xai` | `XAI_API_KEY` | `grok-4` |
+| `zai` | `GLM_API_KEY` | `glm-5.3-flash` |
+
+`zai` speaks the OpenAI-compatible shape at Z.ai's **coding endpoint** and is
+verified end to end (propose + executor). Splitting propose and executor across
+providers works: `--llm zai --executor-provider zai`, or mix families with
+`--fleet`.
 
 Keys resolve in order: an explicit `--api-key` / `api_key=` kwarg → the
 provider's env var, populated from the **target repo's** `.env` by
@@ -273,13 +291,19 @@ dacode run "<task>" --executor pi --isolate bwrap --isolate-network \
   your shell cannot leak into a trial.
 - The interpreter and its venv are re-bound read-only, including symlink targets —
   a venv under `$HOME` is otherwise hidden by the home tmpfs.
+- On systemd-resolved hosts `/etc/resolv.conf` is a symlink into `/run`, which the
+  sandbox empties — a networked sandbox binds the real resolver directory so DNS
+  works.
+- The Pi executor's `~/.pi` is mounted **writable** (pi 1.4 takes lock files next
+  to everything it reads) while `auth.json` stays masked by an empty file: reads
+  return nothing instead of failing, and the key arrives via the environment.
 - If bwrap is missing the run fails closed (`--isolate none` is the explicit
   opt-out), and a gate that cannot be sandboxed returns exit 125 instead of
   running unsandboxed.
 
 Verified: inside a sandboxed trial `cat ~/.ssh/id_rsa`, `cat ~/.hermes/.env`,
 listing the vault and `curl https://example.com` all fail, a file written in the
-workspace succeeds, and the 180-test gate still runs to completion.
+workspace succeeds, and the full test gate still runs to completion.
 
 ## Tests
 
@@ -313,7 +337,7 @@ Built to the pstack rules:
 * **Build the lever** — the rig itself is the tool; every layer is rerunnable.
 * **Sequence verifiable units** — one worktree, one trial, one checkpoint.
 
----
+## Going further
 
 ### Fleet diversity
 
@@ -366,6 +390,9 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
 
 - `AGENTS.md` — the tool-agnostic playbook for any agent editing this repo (gate
   ownership, contract-first tests, one module per run, conventions).
+- `skills/` — the agent-facing operating manual (command shapes, first-week
+  failure triage, gate-integrity references). Canonical copy lives in the skills
+  repository; this snapshot is read-only by convention.
 - `.dacode.md` — the canonical gate command for running the rig *on this repo*:
   `${VIRTUAL_ENV}/bin/python` (trial worktrees have no `.venv`), `-o addopts=`
   (the project's own `-q` would suppress the summary), one module per run.
@@ -384,8 +411,6 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
 - [x] SQLite local state store (`memory.db`) + FTS5 trigram search — `dacode state`
 - [x] Semantic retrieval with pluggable backends — DaCode-owned vector store by default (60/40 blend)
 - [x] Parallel probing of variants — `--parallel N` (worktree creation stays serialised)
-- [x] Test-integrity + baseline guards — a trial may not edit tests (`tests_modified`),
-      shrink the suite (`tests_lost`) or silence it (`tests_skipped`)
 - [x] Per-variant timeout (`--variant-timeout`) and a cost/time ledger in the runlog + `state stats`
 - [x] `dacode retro` — reads the runlog and suggests harness changes (pstack #5)
 - [x] Test-integrity guards on the baseline — `tests_modified` / `tests_lost` /
