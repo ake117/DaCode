@@ -151,7 +151,7 @@ default — see "Memory backends"), `DACODE_EMBED_BASE_URL`, `DACODE_EMBED_MODEL
 | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | `mistral` | `MISTRAL_API_KEY` | `mistral-small-latest` |
 | `xai` | `XAI_API_KEY` | `grok-4` |
-| `zai` | `GLM_API_KEY` | `glm-5.3-flash` |
+| `zai` | `GLM_API_KEY` (Pi also accepts `ZAI_API_KEY`) | `glm-5.3-flash` |
 
 `zai` speaks the OpenAI-compatible shape at Z.ai's **coding endpoint** and is
 verified end to end (propose + executor). Splitting propose and executor across
@@ -160,7 +160,9 @@ providers works: `--llm zai --executor-provider zai`, or mix families with
 
 Keys resolve in order: an explicit `--api-key` / `api_key=` kwarg → the
 provider's env var, populated from the **target repo's** `.env` by
-`cli.load_env`. DaCode deliberately never reads `~/.hermes/.env` or Pi's auth
+`cli.load_env`. Either name of the z.ai key works everywhere (`GLM_API_KEY`
+or Pi's own `ZAI_API_KEY`); when the Pi executor runs provider `zai`, DaCode
+aliases one to the other so the agent always sees a key. DaCode deliberately never reads `~/.hermes/.env` or Pi's auth
 store (`~/.pi/agent/auth.json`) — secrets stay with the project they belong
 to. Every provider speaks the OpenAI-compatible shape, so adding one is a
 single entry in `dacode/llm/providers.py`.

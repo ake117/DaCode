@@ -9,6 +9,7 @@ deepseek/deepseek-v4.1-flash) are used unless overridden here.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
 import subprocess
@@ -20,6 +21,20 @@ from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, wrap_com
 
 if TYPE_CHECKING:
     from dacode.harness.models import HarnessVariant
+
+
+def provider_env(provider: str | None, base: dict[str, str]) -> dict[str, str]:
+    """The child environment, with provider-key aliases applied.
+
+    DaCode's registry names the z.ai key ``GLM_API_KEY`` (llm/providers.py), but
+    Pi's own provider layer reads ``ZAI_API_KEY`` for the same provider id — so a
+    user following DaCode's docs got Pi dying with "No API key found for zai"
+    while the key sat one name away the whole time. An existing ``ZAI_API_KEY``
+    always wins.
+    """
+    if provider == "zai" and base.get("GLM_API_KEY") and not base.get("ZAI_API_KEY"):
+        return {**base, "ZAI_API_KEY": base["GLM_API_KEY"]}
+    return base
 
 
 class PiExecutor:
@@ -79,6 +94,43 @@ class PiExecutor:
         cmd += ["--", task]
         return cmd
 
+    def _sandbox_policy(self, binary_path: str | None) -> IsolationPolicy:
+        """The executor's policy: agent binary, node runtime, agent state dir.
+
+        Node needs the same realpath treatment as the agent binary: pi's shebang
+        is ``#!/usr/bin/env node``, and a Node install under the home directory
+        (nvm/fnm/volta) is hidden by the home tmpfs, so ``env node`` falls through
+        to an older system interpreter and Pi dies with a SyntaxError.
+        ``$NODE_PATH`` stays bound for setups that point it at extra module roots.
+        """
+        policy = self.isolation.with_paths(
+            Path(binary_path).resolve().parent if binary_path else None,
+            os.environ.get("NODE_PATH"),
+        )
+        node = shutil.which("node")
+        if node:
+            real = Path(node).resolve()
+            policy = policy.with_paths(real, real.parent)
+        # pi 1.4 takes a lock file next to everything it reads (settings,
+        # auth, models), so a read-only ~/.pi breaks even reading. Mount the
+        # agent directory writable; auth.json is still masked by the policy's
+        # hidden_files, which wrap_command applies after writable binds.
+        # The writable mount shadows the earlier read-only bind of the
+        # binary's directory (and of the node runtime just above), so both are
+        # re-bound read-only *after* it: otherwise a trial could replace an
+        # executable the host itself runs outside the sandbox (audit #3).
+        return dataclasses.replace(
+            policy,
+            writable_paths=policy.writable_paths + (Path.home() / ".pi",),
+            protected_paths=tuple({
+                p for p in (
+                    Path(binary_path).resolve().parent if binary_path else None,
+                    (Path(shutil.which("node")).resolve().parent
+                     if shutil.which("node") else None),
+                ) if p
+            }),
+        )
+
     def run(self, variant: "HarnessVariant", workspace: str | Path) -> ExecResult:
         if self._resolve_binary() is None:
             return ExecResult(
@@ -86,6 +138,7 @@ class PiExecutor:
                 stderr=f"PiExecutor: '{self.binary}' not found on PATH",
                 command="",
             )
+        env = provider_env(self.provider, dict(os.environ))
         cmd = self.build_command(variant, variant.payload.get("task", ""))
         resolved = self._resolve_binary()
         if resolved:
@@ -96,27 +149,9 @@ class PiExecutor:
             # The agent needs its own binary, config and (to reach a model) the
             # network; everything else stays hidden.
             binary_path = self._resolve_binary()
-            import dataclasses
-
-            policy = self.isolation.with_paths(
-                Path(binary_path).resolve().parent if binary_path else None,
-                os.environ.get("NODE_PATH"),
-            )
-            # pi 1.4 takes a lock file next to everything it reads (settings,
-            # auth, models), so a read-only ~/.pi breaks even reading. Mount the
-            # agent directory writable; auth.json is still masked by the policy's
-            # hidden_files, which wrap_command applies after writable binds.
-            # The writable mount shadows the earlier read-only bind of the
-            # binary's directory, so re-bind that directory read-only *after*
-            # it: otherwise a trial could replace the pi executable the host
-            # itself runs outside the sandbox (follow-up audit, Oct 2026).
-            policy = dataclasses.replace(
-                policy,
-                writable_paths=policy.writable_paths + (Path.home() / ".pi",),
-                protected_paths=(Path(binary_path).resolve().parent,) if binary_path else (),
-            )
+            policy = self._sandbox_policy(binary_path)
             try:
-                cmd = wrap_command(cmd, workspace=workspace, policy=policy)
+                cmd = wrap_command(cmd, workspace=workspace, policy=policy, env=env)
             except IsolationUnavailable as exc:
                 return ExecResult(exit_code=126, stderr=f"isolation unavailable: {exc}", command="")
         try:
@@ -126,6 +161,7 @@ class PiExecutor:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             return ExecResult(
