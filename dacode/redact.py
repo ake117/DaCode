@@ -30,10 +30,16 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 #: Env names whose *values* are secret even when they do not look like a token.
+#: Kept in step with every ``*_API_KEY`` the env allow-list and the sandbox
+#: NETWORK_ENV will route (env.py, sandbox/bwrap.py) — a key the rig passes to
+#: trials must not survive a redact boundary, and z.ai's keys carry no ``sk-``
+#: prefix for the patterns below to catch (GLM/ZAI omission found in the
+#: follow-up audit, Oct 2026).
 _SECRET_ENV = (
     "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
     "GOOGLE_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY",
-    "XAI_API_KEY", "JEV_API_KEY", "DACODE_EMBED_API_KEY",
+    "XAI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "JEV_API_KEY",
+    "DACODE_EMBED_API_KEY",
 )
 
 _MIN_SECRET_LEN = 8
