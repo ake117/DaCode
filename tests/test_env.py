@@ -116,6 +116,11 @@ def test_the_zai_key_is_a_provider_key(monkeypatch, tmp_path):
 
     assert "GLM_API_KEY" in ENV_ALLOW_LIST
     assert "GLM_API_KEY" in NETWORK_ENV
+    # Pi reads the z.ai key under its own name; both spellings must survive the
+    # .env allow-list and the sandbox pass-through (executor/pi.py aliases them).
+    assert "ZAI_API_KEY" in ENV_ALLOW_LIST
+    assert "ZAI_API_KEY" in NETWORK_ENV
+    assert "GOOGLE_API_KEY" in NETWORK_ENV
 
     dotenv = tmp_path / ".env"
     dotenv.write_text("GLM_API_KEY=sk-zai-test\n", encoding="utf-8")
@@ -124,7 +129,31 @@ def test_the_zai_key_is_a_provider_key(monkeypatch, tmp_path):
     load_env(str(dotenv))
     assert os.environ["GLM_API_KEY"] == "sk-zai-test"
 
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    dotenv.write_text("ZAI_API_KEY=sk-zai-pi\n", encoding="utf-8")
+    load_env(str(dotenv))
+    assert os.environ["ZAI_API_KEY"] == "sk-zai-pi"
+
     online = IsolationPolicy(enabled=True, network=True)
     offline = IsolationPolicy(enabled=True, network=False)
     assert "GLM_API_KEY" in allowed_env(online)
     assert "GLM_API_KEY" not in allowed_env(offline)
+    assert "ZAI_API_KEY" in allowed_env(online)
+    assert "ZAI_API_KEY" not in allowed_env(offline)
+
+
+def test_an_unknown_provider_key_is_ignored_out_loud(tmp_path, monkeypatch, capsys):
+    """A provider key the allow-list does not know used to vanish silently, and
+    the failure surfaced much later as the executor dying without its key."""
+    monkeypatch.delenv("ACME_API_KEY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("ACME_API_KEY=sk-test\nSOME_TOOL_FLAG=1\n", encoding="utf-8")
+
+    loaded = load_env(env)
+
+    assert loaded == {}
+    assert "ACME_API_KEY" not in os.environ
+    err = capsys.readouterr().err
+    assert "ACME_API_KEY" in err
+    assert "provider key" in err
+    assert "SOME_TOOL_FLAG" not in err  # ordinary unknown keys stay quiet

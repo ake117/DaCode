@@ -111,10 +111,58 @@ def test_critic_fails_when_a_weak_test_is_present(tmp_path):
         ("==== 5 passed, 2 failed in 1.0s ====", (7, 2)),
         ("1 error in 0.1s", (1, 1)),
         ("nothing to see here", (0, 0)),
+        # stdlib unittest: the counts live on two lines, the verdict carries failures
+        ("Ran 4 tests in 0.001s\n\nOK", (4, 0)),
+        ("Ran 25 tests in 0.123s\n\nFAILED (failures=2, errors=1)", (25, 3)),
+        ("Ran 6 tests in 0.010s\n\nOK (skipped=1)", (6, 0)),
+        ("Ran 1 test in 0.001s\n\nOK", (1, 0)),
+        # a 'Ran' line cut off before any verdict stays uncounted (honest 0/0)
+        ("Ran 25 tests in 0.123s", (0, 0)),
     ],
 )
 def test_parse_test_summary_understands_common_runners(stdout, expected):
     assert _parse_test_summary(stdout) == expected
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        ("Ran 4 tests in 0.001s\n\nOK", (4, 0, 0)),
+        ("Ran 6 tests in 0.010s\n\nOK (skipped=1)", (6, 0, 1)),
+        ("Ran 25 tests in 0.123s\n\nFAILED (failures=2, errors=1, skipped=3)", (25, 3, 3)),
+        # pytest output must keep its own shape through the unittest parser
+        ("2 passed, 1 skipped in 0.2s", (2, 0, 1)),
+    ],
+)
+def test_parse_test_counts_understands_unittest(stdout, expected):
+    from dacode.discipline.critic import _parse_test_counts
+
+    assert _parse_test_counts(stdout) == expected
+
+
+def test_unittest_summary_on_stderr_is_counted(tmp_path):
+    """stdlib unittest prints its dots and summary on stderr, not stdout: a fully
+    green `python -m unittest` suite used to read as 0/0 collected ("no tests")
+    and every honest trial failed the gate."""
+    _write(tmp_path, "test_ok.py", "def test_a():\n    assert 1 + 1 == 2\n")
+    cmd = (sys.executable, "-c", "import sys; sys.stderr.write('Ran 2 tests in 0.0s\\n\\nOK\\n')")
+    report = PstackCritic(test_command=cmd).review_workspace(tmp_path)
+    assert report.tests_total == 2
+    assert report.tests_passed == 2
+    assert "no_tests" not in {f.check for f in report.findings}
+    assert report.passed is True
+
+
+def test_stdout_summary_still_wins_over_stderr_noise(tmp_path):
+    """A summary on stdout is authoritative; stderr is only a fallback."""
+    _write(tmp_path, "test_ok.py", "def test_a():\n    assert 1 + 1 == 2\n")
+    cmd = (
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.write('3 passed in 0.1s\\n'); sys.stderr.write('9 failed on stderr\\n')",
+    )
+    report = PstackCritic(test_command=cmd).review_workspace(tmp_path)
+    assert (report.tests_total, report.tests_failed) == (3, 0)
 
 
 def test_static_scan_ignores_non_python_test_files(tmp_path):

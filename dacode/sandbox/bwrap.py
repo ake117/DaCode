@@ -47,9 +47,11 @@ BASE_ENV = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TERM")
 NETWORK_ENV = (
     "OPENROUTER_API_KEY",
     "GLM_API_KEY",
+    "ZAI_API_KEY",  # Pi's own name for the z.ai key — see executor/pi.py
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
     "GROQ_API_KEY",
     "DEEPSEEK_API_KEY",
     "MISTRAL_API_KEY",

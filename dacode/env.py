@@ -61,6 +61,7 @@ ENV_ALLOW_LIST: tuple[str, ...] = (
     "GROQ_API_KEY",
     "DEEPSEEK_API_KEY",
     "GLM_API_KEY",
+    "ZAI_API_KEY",  # the same z.ai key under Pi's own name (see executor/pi.py)
     "MISTRAL_API_KEY",
     "XAI_API_KEY",
     "JEV_API_KEY",
@@ -119,6 +120,12 @@ def load_env(
         if key.startswith(("DACODE_", "GIT_", "PYTHON", "LD_", "BASH_ENV"))
         or key.upper().endswith("_PROXY")
     )
+    # A provider key the allow-list does not know would previously vanish without
+    # a word, and the failure surfaced much later as the executor dying with
+    # "No API key found for <provider>" (z.ai's second name is the live case —
+    # see executor/pi.py). Name it here, where the user is still configuring.
+    dropped_keys = sorted(key for key in set(ignored) if key.upper().endswith("_API_KEY"))
+    dangerous = [key for key in dangerous if key not in dropped_keys]
     if dangerous:
         import sys
 
@@ -126,6 +133,15 @@ def load_env(
             f"[env] ignored {len(dangerous)} setting(s) from .env that could change how "
             f"DaCode runs ({', '.join(dangerous[:6])}) — the .env is only trusted for "
             "provider keys; set DACODE_ENV_TRUST=1 for repositories you own",
+            file=sys.stderr,
+        )
+    if dropped_keys:
+        import sys
+
+        print(
+            f"[env] ignored {len(dropped_keys)} provider key(s) from .env that DaCode "
+            f"does not pass through ({', '.join(dropped_keys[:6])}) — export them in "
+            "your shell instead, or set DACODE_ENV_TRUST=1 for repositories you own",
             file=sys.stderr,
         )
     return loaded
