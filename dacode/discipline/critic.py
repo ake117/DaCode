@@ -143,7 +143,9 @@ class PstackCritic:
         green without proving anything; the baseline is what makes that visible.
         """
         try:
-            _exit, _out, _err, total, _failed, skipped, _note = self._run_tests(Path(repo))
+            _exit, _out, _err, total, _failed, skipped, _note, _source = self._run_tests(
+                Path(repo)
+            )
         except Exception:  # noqa: BLE001 - a missing baseline must never block a run
             return None
         static = self._static_test_count(Path(repo))
@@ -175,8 +177,14 @@ class PstackCritic:
 
     def _run_once(
         self, command: Sequence[str], workspace: Path
-    ) -> tuple[int, str, str, int, int, int, str | None]:
-        """One gate run. Counts come from a JUnit report when pytest can write one."""
+    ) -> tuple[int, str, str, int, int, int, str | None, bool]:
+        """One gate run. Counts come from a JUnit report when pytest can write one.
+
+        The last element is ``from_report``: the counts were read from the JUnit
+        report written outside the workspace, not parsed from the run's own
+        stdout. Callers use it to refuse stdout-only counts where a real report
+        is always available (see review_workspace).
+        """
         import shutil
 
         junit_dir: Path | None = None
@@ -208,16 +216,17 @@ class PstackCritic:
                 env=_gate_env(),
             )
         except IsolationUnavailable as exc:
-            return 125, "", f"isolation unavailable: {exc}", 0, 0, 0, None
+            return 125, "", f"isolation unavailable: {exc}", 0, 0, 0, None, False
         except FileNotFoundError as exc:
-            return 127, "", f"test command not found: {exc}", 0, 0, 0, None
+            return 127, "", f"test command not found: {exc}", 0, 0, 0, None, False
         except subprocess.TimeoutExpired as exc:
-            return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0, None
+            return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0, None, False
         finally:
             pass
 
         xml_counts = None
         junit_shaped = False
+        counts_source = "stdout"
         if junit is not None:
             parsed = _junit_counts(junit, stdout=proc.stdout)
             if parsed is not None:
@@ -232,6 +241,7 @@ class PstackCritic:
             stderr_counts = _parse_test_counts(proc.stderr)
             if stderr_counts[0] > 0:
                 stdout_counts = stderr_counts
+                counts_source = "unittest_summary"
         note = None
         if (
             xml_counts is not None
@@ -252,11 +262,15 @@ class PstackCritic:
             # something ended the process before pytest could write it.
             note = (note + " " if note else "") + "counts_unavailable:no junit report"
         counts = xml_counts if (xml_counts and xml_counts[0] > 0) else stdout_counts
+        if xml_counts and xml_counts[0] > 0:
+            counts_source = "report"
         if junit_dir is not None:
             shutil.rmtree(junit_dir, ignore_errors=True)
-        return proc.returncode, proc.stdout, proc.stderr, *counts, note
+        return proc.returncode, proc.stdout, proc.stderr, *counts, note, counts_source
 
-    def _run_tests(self, workspace: Path) -> tuple[int, str, str, int, int, int, str | None]:
+    def _run_tests(
+        self, workspace: Path
+    ) -> tuple[int, str, str, int, int, int, str | None, bool]:
         result = self._run_once(list(self.test_command), workspace)
         if result[3] == 0 and result[0] == 0:
             # A green run with no counts usually means the project's own addopts
@@ -266,7 +280,9 @@ class PstackCritic:
                 return retried
         return result
 
-    def _neutralised_run(self, workspace: Path) -> tuple[int, str, str, int, int, int, str | None] | None:
+    def _neutralised_run(
+        self, workspace: Path
+    ) -> tuple[int, str, str, int, int, int, str | None, bool] | None:
         """Re-run with ``-o addopts=`` so a quiet project config cannot look like 0 tests."""
         if not self.test_command or not _pytest_like(self.test_command):
             # ``-o addopts=`` is a pytest flag: appending it to a unittest or
@@ -482,12 +498,14 @@ class PstackCritic:
         contract: dict[str, str] | None = None,
     ) -> CritiqueReport:
         workspace = Path(workspace)
-        findings, _files = self._scan_tests(workspace)
+        findings, py_test_files = self._scan_tests(workspace)
         if contract is not None:
             findings.extend(self._check_contract(workspace, contract))
         else:
             findings.extend(self._check_test_integrity(workspace))
-        exit_code, stdout, stderr, total, failed, skipped, counts_note = self._run_tests(workspace)
+        exit_code, stdout, stderr, total, failed, skipped, counts_note, counts_source = (
+            self._run_tests(workspace)
+        )
         if counts_note and "counts_unavailable" in counts_note:
             findings.append(
                 Finding(
@@ -508,6 +526,37 @@ class PstackCritic:
                     message=(
                         "the test runner's own report disagrees with its stdout — "
                         f"something is printing a summary ({counts_note})"
+                    ),
+                    location=str(workspace),
+                )
+            )
+
+        # A printed summary is the suite grading its own homework. For a Python
+        # suite that is never necessary: pytest can always emit the JUnit report
+        # the gate already attaches, so a green run counted only from stdout is
+        # refused outright (SECURITY.md open item 1, enforced). Two exemptions,
+        # both about what a suite *can* emit, not what it prints:
+        # - a report-backed run is the authoritative source;
+        # - a stdlib unittest suite has no report at all — its deterministic
+        #   two-line stderr summary is the only count that exists (residual 7
+        #   covers the forgery shape). Non-Python suites (C/JS/PHPUnit) keep
+        #   the stdout count; the integrity and infrastructure guards still apply.
+        if (
+            counts_source == "stdout"
+            and exit_code == 0
+            and total > 0
+            and py_test_files > 0
+        ):
+            findings.append(
+                Finding(
+                    check="counts_from_stdout",
+                    severity="error",
+                    message=(
+                        "the only counts are the suite's own printed summary — a "
+                        "Python suite must emit a real report: make the command "
+                        "name pytest (the gate attaches --junitxml itself, also "
+                        "inside `bash -c` scripts), or wrap the runner so pytest "
+                        "writes one"
                     ),
                     location=str(workspace),
                 )
