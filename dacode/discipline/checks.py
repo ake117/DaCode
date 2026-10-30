@@ -81,6 +81,7 @@ class _TestVisitor(ast.NodeVisitor):
             if isinstance(child, ast.Assert)
             or self._is_assert_call(child)
             or self._is_raises_context(child)
+            or self._is_import_check(child)
         ]
         if not asserts:
             self.findings.append(
@@ -125,6 +126,28 @@ class _TestVisitor(ast.NodeVisitor):
             )
             for item in node.items
         )
+
+    @staticmethod
+    def _is_import_check(node: ast.AST) -> bool:
+        """``import x`` / ``importlib.import_module(x)`` assert importability.
+
+        Both raise ImportError/ModuleNotFoundError when the target is missing or
+        broken, so a body that runs one *can* fail — "it cannot fail" is factually
+        wrong for it. Real-world repro (Oct 2026): tomli's ``test_types_import``
+        exists to smoke-test the ``_types`` module no other test imports, and was
+        flagged ``assertion_free`` (error → gate red) purely for running
+        ``importlib.import_module`` on it. Module-level imports are not touched:
+        this only recognises imports inside the test body.
+        """
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return True
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "import_module":
+                return True
+            if isinstance(func, ast.Name) and func.id == "import_module":
+                return True
+        return False
 
     def _check_assert(self, node: ast.Assert) -> None:
         test = node.test
