@@ -531,6 +531,39 @@ class PstackCritic:
                 )
             )
 
+        # A sandbox hides $HOME by design, so an interpreter whose packages are
+        # a pip --user install gets an opaque "No module named X" instead of a
+        # verdict. Name the cause and the two clean ways out — the sandbox does
+        # not open for this (the home is hidden on purpose), but the message
+        # should not be a riddle (issue #9).
+        # pytest reports collection-time import errors on stdout, not stderr —
+        # scan both.
+        run_text = f"{stdout}\n{stderr}"
+        if exit_code != 0 and self.isolation is not None and self.isolation.enabled:
+            match = re.search(r"No module named (?:'([^']+)'|([\w.]+))", run_text)
+            if match:
+                module = (match.group(1) or match.group(2)).split(".")[0]
+                home = Path.home()
+                if (
+                    module
+                    and _module_lives_under_home(module, home)
+                    and not (workspace / module).exists()
+                ):
+                    findings.append(
+                        Finding(
+                            check="hidden_home_packages",
+                            severity="error",
+                            message=(
+                                f"'{module}' is installed under your home directory "
+                                "(pip --user), which the sandbox hides by design — the "
+                                "suite cannot see it. Point the test command at a "
+                                "workspace-local venv (the workspace is bound) or a "
+                                "system-installed runner."
+                            ),
+                            location=str(workspace),
+                        )
+                    )
+
         # A printed summary is the suite grading its own homework. For a Python
         # suite that is never necessary: pytest can always emit the JUnit report
         # the gate already attaches, so a green run counted only from stdout is
@@ -762,6 +795,28 @@ def _gate_env() -> dict[str, str]:
     if os.environ.get("DACODE_GATE_PLUGIN_AUTOLOAD", "").lower() not in {"1", "true", "yes"}:
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     return env
+
+
+def _module_lives_under_home(module: str, home: Path) -> bool:
+    """Does the host keep this package under ``$HOME`` (a pip --user install)?
+
+    A user-site package is invisible to a sandboxed run (the home tmpfs hides
+    it by design), which is a plausible cause of an otherwise opaque
+    ``No module named X`` from a sandboxed suite. Layouts covered: pip's
+    ``~/.local/lib/python*/site-packages`` (and lib64). Bounded on purpose —
+    no whole-home scan.
+    """
+    parts = ("site-packages",)
+    for lib in (home / ".local" / "lib", home / ".local" / "lib64"):
+        if not lib.is_dir():
+            continue
+        for interp in lib.iterdir():
+            if not interp.is_dir() or not interp.name.startswith("python"):
+                continue
+            site = interp / parts[0]
+            if (site / module).is_dir() or (site / f"{module}.py").is_file():
+                return True
+    return False
 
 
 def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
