@@ -58,6 +58,42 @@ def test_accepts_pytest_raises_as_an_assertion(tmp_path):
     assert check_python_test(path) == []
 
 
+def test_accepts_an_import_as_a_check(tmp_path):
+    """``import x`` / ``importlib.import_module(x)`` raise on failure — a body
+    that runs one *can* fail, so `assertion_free` ("it cannot fail") is wrong.
+
+    Real-world repro (Oct 2026): tomli's ``test_types_import`` smoke-tests the
+    ``_types`` module no other test imports and was flagged as an error, which
+    turned the whole gate red on a healthy upstream suite.
+    """
+    bodies = (
+        "import tomllib\n"
+        "def test_a():\n"
+        "    import tomllib._types\n",
+
+        "import importlib\n"
+        "def test_a():\n"
+        "    importlib.import_module('tomllib._types')\n",
+
+        "def test_a():\n"
+        "    from tomllib import _types\n",
+
+        "def test_a():\n"
+        "    import_module('json')\n",
+    )
+    for i, body in enumerate(bodies):
+        path = _write(tmp_path, f"test_import_{i}.py", body)
+        assert check_python_test(path) == [], f"body {i} flagged"
+
+
+def test_a_body_without_any_check_is_still_flagged(tmp_path):
+    """The import exception must not swallow the original case: a body that
+    only computes a value still cannot fail."""
+    path = _write(tmp_path, "test_x.py", "def test_a():\n    value = compute()\n")
+    checks = {f.check for f in check_python_test(path)}
+    assert "assertion_free" in checks
+
+
 def test_critic_passes_a_clean_workspace(tmp_path):
     _write(tmp_path, "test_ok.py", "def test_add():\n    assert 1 + 1 == 2\n")
     report = PstackCritic().review_workspace(tmp_path)
