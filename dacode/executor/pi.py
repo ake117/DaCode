@@ -106,9 +106,14 @@ class PiExecutor:
             # auth, models), so a read-only ~/.pi breaks even reading. Mount the
             # agent directory writable; auth.json is still masked by the policy's
             # hidden_files, which wrap_command applies after writable binds.
+            # The writable mount shadows the earlier read-only bind of the
+            # binary's directory, so re-bind that directory read-only *after*
+            # it: otherwise a trial could replace the pi executable the host
+            # itself runs outside the sandbox (follow-up audit, Oct 2026).
             policy = dataclasses.replace(
                 policy,
                 writable_paths=policy.writable_paths + (Path.home() / ".pi",),
+                protected_paths=(Path(binary_path).resolve().parent,) if binary_path else (),
             )
             try:
                 cmd = wrap_command(cmd, workspace=workspace, policy=policy)
