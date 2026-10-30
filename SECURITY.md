@@ -84,6 +84,12 @@ provider API keys in the environment, and anything reachable over the network.
    per trust domain, or read the lessons (`dacode memory search`) before pointing
    a new repository at a vault that hostile work has written to.
 
+A sandbox hides `$HOME` by design, so a suite importing a **pip --user**
+package fails with `No module named X`. The gate turns that into a named
+`hidden_home_packages` finding (cause + the workspace-venv / system-runner
+way out) instead of leaving the riddle; the home stays closed — there is
+deliberately no flag that binds user-site packages in.
+
 ## Running safely today
 
 ```bash

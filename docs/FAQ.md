@@ -69,6 +69,14 @@ preflight balance check. Cap it in `~/.pi/agent/models.json` — the override mu
 **target repository's** `.env` — that is the file the CLI loads (plus your real
 environment), never `~/.hermes/.env` or Pi's auth store.
 
+### `No module named X` — but the package IS installed
+
+If X lives under your home directory (a `pip --user` install), the sandbox
+hides it by design — the home is empty inside a trial. The gate names this as
+a `hidden_home_packages` finding instead of leaving the riddle. Two clean
+ways out: a **workspace-local venv** (the workspace is bound into the trial)
+or a **system-installed runner**. There is no flag that opens the home.
+
 ## Reading the verdict
 
 ### My change works, all tests pass — why did the run say FAIL?

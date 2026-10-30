@@ -42,6 +42,7 @@ rather than failing and the key must come from the environment.
 | `exit 127` | Pi is not on `PATH` |
 | `SyntaxError` from inside the sandbox, mentioning syntax Pi 1.4 needs | a Node older than 22 answered `env node` — update DaCode (the runtime is bound now) or point `PATH` at the right Node |
 | `pi auth check` says `ready`, but `pi --print` answers **402** | the provider account is out of credits — Pi requests a large `max_tokens`, so a small balance is not enough. Cap it in `~/.pi/agent/models.json`, **under the provider key** (a top-level `modelOverrides` is silently ignored) — the recipe is in the [FAQ](FAQ.md) |
+| `No module named X` from a sandboxed suite, where X is a `pip --user` package | the sandbox hides `$HOME` by design, so user-site packages are invisible. Point the test command at a workspace-local venv or a system-installed runner — the gate emits a `hidden_home_packages` finding saying exactly this |
 | `Unknown option: --system-prompt=` | a pre-1.4 DaCode against Pi 1.4+ — update DaCode; prompts travel as separate argv items now |
 | `Credential store read failed ... EACCES` | an old mask binding `/dev/null` denies reads outright — update DaCode |
 
