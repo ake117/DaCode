@@ -67,9 +67,17 @@ class GitSandbox:
 
     # -- internals ---------------------------------------------------------
 
+    _HARDENED_GIT: tuple[str, ...] = (
+        "-c", "core.hooksPath=/dev/null",
+        "-c", "core.fsmonitor=false",
+        "-c", "commit.gpgsign=false",
+        "-c", "core.attributesFile=/dev/null",
+        "-c", "protocol.file.allow=never",
+    )
+
     def _run(self, *args: str, cwd: str | Path | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [self.git_bin, *args],
+            [self.git_bin, *self._HARDENED_GIT, *args],
             cwd=str(cwd or self.repo),
             capture_output=True,
             text=True,
@@ -129,14 +137,33 @@ class GitSandbox:
         if not path.exists():
             raise SandboxError(f"no worktree for task {task_id!r} at {path}")
         dot_git = path / ".git"
-        if not dot_git.is_file():
+        if dot_git.is_symlink() or not dot_git.is_file():
             raise SandboxError(
                 f"{dot_git} is not a worktree pointer file — refusing to run git hooks "
                 "from a trial-controlled repository"
             )
-        hardened = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
-        self._git(*hardened, "add", "-A", cwd=path)
-        self._git(*hardened, "commit", "--allow-empty", "-m", message, cwd=path)
+        try:
+            pointer = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError as exc:
+            raise SandboxError(f"cannot read worktree pointer {dot_git}: {exc}") from exc
+        if not pointer.startswith("gitdir:"):
+            raise SandboxError(
+                f"{dot_git} is not a valid worktree pointer — refusing to run git on {path}"
+            )
+        gitdir_raw = pointer.partition(":")[2].strip()
+        gitdir_target = Path(gitdir_raw)
+        if not gitdir_target.is_absolute():
+            gitdir_target = (path / gitdir_target).resolve()
+        else:
+            gitdir_target = gitdir_target.resolve()
+        expected_root = (self.repo / ".git" / "worktrees").resolve()
+        if not gitdir_target.is_relative_to(expected_root):
+            raise SandboxError(
+                f"{dot_git} points outside {expected_root} ({gitdir_target}) — refusing to "
+                "run git on a redirected worktree pointer"
+            )
+        self._git("add", "-A", cwd=path)
+        self._git("commit", "--allow-empty", "-m", message, cwd=path)
         return self._git("rev-parse", "HEAD", cwd=path).strip()
 
     def head_sha(self, task_id: str) -> str:

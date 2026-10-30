@@ -286,11 +286,21 @@ class VaultMemory:
                         ),
                     )
                 )
+        from dacode.redact import redact
+
         hits.sort(key=lambda h: (-h.score, str(h.path)))
         semantic_hits = self._semantic_hits(query, limit)
-        if not semantic_hits:
-            return hits[:limit]
-        return self._blend(hits, semantic_hits, limit)
+        raw_hits = hits[:limit] if not semantic_hits else self._blend(hits, semantic_hits, limit)
+        return [
+            MemoryHit(
+                path=h.path,
+                title=redact(h.title),
+                score=h.score,
+                snippet=redact(h.snippet),
+                tags=h.tags,
+            )
+            for h in raw_hits
+        ]
 
     @staticmethod
     def _snippet(tokens: list[str], body: str, width: int = 200) -> str:

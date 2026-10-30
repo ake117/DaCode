@@ -241,7 +241,8 @@ class PstackCritic:
             stderr_counts = _parse_test_counts(proc.stderr)
             if stderr_counts[0] > 0:
                 stdout_counts = stderr_counts
-                counts_source = "unittest_summary"
+                if _parse_unittest_summary(_strip_ansi(proc.stderr).splitlines()) is not None:
+                    counts_source = "unittest_summary"
         note = None
         if (
             xml_counts is not None
@@ -306,9 +307,16 @@ class PstackCritic:
         name = relative.name
         if name in self.gate_infra:
             return True
-        if name.startswith("conftest") or name.startswith("test_") or name.startswith("_test"):
+        if (
+            name.startswith("conftest")
+            or name.startswith("test_")
+            or name.startswith("_test")
+            or name.endswith("_test.py")
+        ):
             return True
         if fnmatch.fnmatch(name, self.test_glob):
+            return True
+        if name.endswith(".py") and relative.stem in SHADOW_NAMES:
             return True
         if any(part in SHADOW_NAMES for part in relative.parts[:-1]):
             return True
@@ -346,7 +354,8 @@ class PstackCritic:
         root = Path(workspace)
         contract: dict[str, str] = {}
         for path in sorted(root.rglob("*")):
-            if not path.is_file():
+            is_link = path.is_symlink()
+            if not is_link and not path.is_file():
                 continue
             relative = path.relative_to(root)
             # Interpreter caches appear the moment *any* pytest runs — including
@@ -358,7 +367,12 @@ class PstackCritic:
             if not self._is_contract_path(relative, test_dirs=self._test_dirs(root)):
                 continue
             try:
-                contract[str(relative)] = hashlib.sha256(path.read_bytes()).hexdigest()
+                raw = (
+                    f"symlink:{os.readlink(path)}".encode("utf-8")
+                    if is_link
+                    else path.read_bytes()
+                )
+                contract[str(relative)] = hashlib.sha256(raw).hexdigest()
             except OSError:
                 continue
         return contract
@@ -427,7 +441,13 @@ class PstackCritic:
         """
         try:
             proc = subprocess.run(
-                ["git", "status", "--porcelain", "--untracked-files=all"],
+                [
+                    "git",
+                    "-c", "core.hooksPath=/dev/null",
+                    "-c", "core.fsmonitor=false",
+                    "-c", "core.attributesFile=/dev/null",
+                    "status", "--porcelain", "--untracked-files=all",
+                ],
                 cwd=str(workspace),
                 capture_output=True,
                 text=True,
@@ -666,7 +686,9 @@ class PstackCritic:
 
 
 #: Path components that shadow or hook the runner when the workspace is `sys.path[0]`.
-SHADOW_NAMES: tuple[str, ...] = ("pytest", "_pytest", "pluggy", "py", "sitecustomize", "usercustomize")
+SHADOW_NAMES: tuple[str, ...] = (
+    "pytest", "_pytest", "pluggy", "py", "unittest", "xml", "sitecustomize", "usercustomize",
+)
 
 DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "conftest.py",
@@ -680,6 +702,9 @@ DEFAULT_GATE_INFRA: tuple[str, ...] = (
     # modules that shadow or hook the runner inside the workspace
     "pytest.py",
     "_pytest.py",
+    "pluggy.py",
+    "py.py",
+    "unittest.py",
     "sitecustomize.py",
     "usercustomize.py",
 )

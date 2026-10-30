@@ -107,13 +107,16 @@ class DaCodeRig:
         """
         if self.isolation is None:
             return None
-        hidden = [Path(self.config.repo).resolve() / ".env"]
+        repo = Path(self.config.repo).resolve()
+        hidden = [repo / ".env"]
+        protected = [repo / ".git"] if (repo / ".git").exists() else []
         return IsolationPolicy(
             enabled=True,
             network=False,
             read_only_paths=(),
             env_allow=(),
             hidden_files=tuple(path for path in hidden if path.exists()),
+            protected_paths=tuple(protected),
         )
 
     def _isolation_policy(self) -> IsolationPolicy | None:
