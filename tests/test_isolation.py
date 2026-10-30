@@ -289,3 +289,108 @@ def test_a_symlink_under_a_home_top_level_directory_does_not_expose_it(tmp_path,
 
     assert (home / ".local") not in binds
     assert binds
+
+
+# --- the writable ~/.pi mount must not expose the agent's binary (Oct 2026) --
+
+def _bind_positions(argv: list[str], target: Path) -> list[int]:
+    """Indexes in ``argv`` where ``target`` is bound (ro or rw)."""
+    text = str(target)
+    return [i + 1 for i, flag in enumerate(argv) if flag in ("--bind", "--ro-bind")
+            and i + 1 < len(argv) and argv[i + 1] == text]
+
+
+def test_a_protected_path_is_bound_after_the_writable_parent(tmp_path):
+    """Later mounts shadow earlier ones, so the protective ro-bind must come last."""
+    home = tmp_path / "home"
+    bindir = home / ".pi" / "agent" / "bin"
+    bindir.mkdir(parents=True)
+    (tmp_path / "ws").mkdir()
+    argv = wrap_command(
+        ["bash", "-c", "true"],
+        workspace=tmp_path / "ws",
+        policy=IsolationPolicy(
+            enabled=True,
+            read_only_paths=(bindir,),
+            writable_paths=(home,),
+            protected_paths=(bindir,),
+        ),
+        home=home,
+    )
+    ro_after = _bind_positions(argv, bindir)
+    # bound read-only twice: once with the other read_only_paths, once last
+    assert len(ro_after) == 2
+    writable = _bind_positions(argv, home)
+    assert writable and max(writable) < max(ro_after), (
+        "the protected re-bind must be emitted after the writable mount, "
+        "or the writable mount shadows it and the child stays writable"
+    )
+
+
+@needs_bwrap
+def test_a_trial_cannot_replace_the_agent_binary_under_a_writable_home(tmp_path):
+    """The executor policy makes ~/.pi writable for pi's lock file; the binary
+    directory must survive that as read-only *and* on the host afterwards."""
+    home = tmp_path / "home"
+    bindir = home / ".pi" / "agent" / "bin"
+    bindir.mkdir(parents=True)
+    binary = bindir / "pi"
+    binary.write_text("#!/bin/sh\necho real-pi\n")
+    binary.chmod(0o755)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    policy = IsolationPolicy(
+        enabled=True,
+        read_only_paths=(bindir,),
+        writable_paths=(home,),
+        protected_paths=(bindir,),
+    )
+    argv = wrap_command(
+        ["bash", "-c",
+         f"cat {binary}"
+         f" && {{ echo trojan > {binary} || echo WRITE-BLOCKED; }}"
+         f" && cat {binary}"
+         f" && echo trial-lock > {home / '.pi' / 'agent' / 'session.lock'} && echo LOCK-OK"],
+        workspace=ws,
+        policy=policy,
+        home=home,
+    )
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    assert "trojan" not in proc.stdout
+    # the binary was readable before and after the blocked write...
+    assert proc.stdout.count("real-pi") == 2, proc.stdout
+    # ...the lock file the writable mount exists for still works...
+    assert "LOCK-OK" in proc.stdout
+    assert (home / ".pi" / "agent" / "session.lock").read_text().strip() == "trial-lock"
+    # ...and the host copy is exactly what it was before the run
+    assert binary.read_text() == "#!/bin/sh\necho real-pi\n"
+
+
+def test_the_executor_policy_protects_the_pi_binary_directory(tmp_path, monkeypatch):
+    """PiExecutor.run must re-bind the resolved binary's directory read-only on
+    top of the writable ~/.pi mount (persistence audit, Oct 2026)."""
+    import dacode.executor.pi as pi_mod
+    from dacode.executor.pi import PiExecutor
+
+    home = tmp_path / "home"
+    fake_pi = home / ".pi" / "agent" / "bin" / "pi"
+    fake_pi.parent.mkdir(parents=True)
+    fake_pi.write_text("#!/bin/sh\n")
+    fake_pi.chmod(0o755)
+    monkeypatch.setattr(pi_mod.shutil, "which", lambda name: str(fake_pi))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    captured: dict = {}
+
+    def fake_wrap(command, *, workspace, policy, **kwargs):
+        captured["policy"] = policy
+        return ["true"]
+
+    monkeypatch.setattr(pi_mod, "wrap_command", fake_wrap)
+    executor = PiExecutor(isolation=IsolationPolicy(enabled=True))
+    (tmp_path / "ws").mkdir()
+    result = executor.run(_variant(), tmp_path / "ws")
+    assert result.exit_code == 0
+    policy = captured["policy"]
+    assert fake_pi.parent in policy.protected_paths
+    assert home / ".pi" in policy.writable_paths

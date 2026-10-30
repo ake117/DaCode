@@ -76,6 +76,14 @@ class IsolationPolicy:
     hidden_files: tuple[Path, ...] = field(default_factory=tuple)
     #: Extra directories bound read-write (the gate's JUnit report directory).
     writable_paths: tuple[Path, ...] = field(default_factory=tuple)
+    #: Paths re-bound read-only *after* the writable binds. Later mounts shadow
+    #: earlier ones, so a read-only entry in ``read_only_paths`` that lives under
+    #: a ``writable_paths`` parent is silently shadowed — an executor policy that
+    #: makes ``~/.pi`` writable for the agent's lock file would otherwise leave
+    #: the agent's own binary directory writable, and a trial could replace the
+    #: executable the host runs next (follow-up audit, Oct 2026). Anything listed
+    #: here wins over the writable ancestor above it.
+    protected_paths: tuple[Path, ...] = field(default_factory=tuple)
 
     def with_paths(self, *paths: str | Path | None) -> "IsolationPolicy":
         """Return a copy with more read-only bindings (None entries are ignored)."""
@@ -91,6 +99,7 @@ class IsolationPolicy:
             env_allow=self.env_allow,
             hidden_files=self.hidden_files,
             writable_paths=self.writable_paths,
+            protected_paths=self.protected_paths,
         )
 
 
@@ -224,6 +233,15 @@ def wrap_command(
         target = Path(extra).expanduser().resolve()
         if target.is_dir():
             argv += ["--bind", str(target), str(target)]
+
+    # Protected re-binds come after the writable binds so they shadow them: a
+    # read-only mount on a child of a writable parent is the only way the child
+    # actually stays read-only (later mounts win). The gate's writable JUnit
+    # directory has no protected overlap, so this is a no-op for it.
+    for extra in policy.protected_paths:
+        target = Path(extra).expanduser().resolve()
+        if target.exists():
+            argv += ["--ro-bind", str(target), str(target)]
 
     # Files the policy hides are replaced by an empty regular file, so a
     # repository's own .env (or an agent's auth file) reads back as empty even
