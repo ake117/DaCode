@@ -359,7 +359,7 @@ def test_a_report_whose_declared_totals_do_not_match_its_testcases_is_rejected(t
 
     report = tmp_path / "report.xml"
     report.write_text(JUNIT_FAKE, encoding="utf-8")
-    assert _junit_counts(report) is None
+    assert _junit_counts(report) is None  # no stdout to corroborate the gap either
 
 
 def test_a_consistent_report_still_parses(tmp_path):
@@ -374,7 +374,7 @@ def test_a_consistent_report_still_parses(tmp_path):
         "</testsuite></testsuites>",
         encoding="utf-8",
     )
-    assert _junit_counts(report) == (2, 1, 0)
+    assert _junit_counts(report) == ((2, 1, 0), False)
 
 
 def test_a_module_that_rewrites_the_report_at_exit_cannot_win(tmp_path):
