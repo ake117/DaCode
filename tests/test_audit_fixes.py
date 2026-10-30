@@ -481,3 +481,141 @@ def test_coloured_phpunit_summary_is_still_counted():
     coloured = "\x1b[37;41mTests: 23\x1b[0m\x1b[37;41m, Assertions: 65\x1b[0m\x1b[37;41m, Failures: 2\x1b[0m\x1b[37;41m, Deprecations: 6\x1b[0m\x1b[37;41m.\x1b[0m"
     assert _parse_test_counts(coloured) == (23, 2, 0)
     assert _parse_test_counts("\x1b[32mOK (17 tests, 46 assertions)\x1b[0m") == (17, 0, 0)
+
+
+def test_checkpoint_refuses_a_redirected_gitdir_pointer_or_symlink(tmp_path):
+    """Issue #10: dot_git.is_file() allowed a rewritten `gitdir:` pointer or symlink."""
+    from dacode.sandbox import SandboxError
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("x", encoding="utf-8")
+    _git_baseline(repo)
+
+    sandbox = GitSandbox(repo, sandbox_root=tmp_path / "worktrees")
+    workspace = sandbox.create("trial-git-redirect")
+
+    dot_git = workspace / ".git"
+    fake_git = workspace / ".fake_git"
+    fake_git.mkdir()
+    dot_git.write_text(f"gitdir: {fake_git}\n", encoding="utf-8")
+
+    with pytest.raises(SandboxError, match="worktree pointer"):
+        sandbox.checkpoint("trial-git-redirect", "should refuse redirected gitdir")
+
+
+def test_hidden_files_and_protected_paths_come_after_workspace_bind(tmp_path):
+    """Issue #11: --bind <workspace> was emitted after hidden_files and protected_paths,
+    unmasking <repo>/.env during measure_baseline(repo)."""
+    from dacode.sandbox import bwrap as bwrap_mod
+    from dacode.sandbox.bwrap import IsolationPolicy, wrap_command
+
+    if not bwrap_mod.available():
+        pytest.skip("bwrap not available")
+
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("OPENROUTER_API_KEY=sk-secret-value-1234567890\n", encoding="utf-8")
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    policy = IsolationPolicy(
+        enabled=True,
+        hidden_files=(dotenv,),
+        protected_paths=(git_dir,),
+    )
+    argv = wrap_command(["true"], workspace=tmp_path, policy=policy)
+
+    ws_bind = next(
+        i for i in range(len(argv) - 2)
+        if argv[i] == "--bind" and argv[i + 1] == str(tmp_path.resolve())
+    )
+    mask_bind = next(
+        i for i in range(len(argv) - 2)
+        if argv[i] == "--ro-bind" and argv[i + 2] == str(dotenv.resolve())
+    )
+    prot_bind = max(
+        i for i in range(len(argv) - 2)
+        if argv[i] == "--ro-bind" and argv[i + 2] == str(git_dir.resolve())
+    )
+    assert ws_bind < prot_bind < mask_bind
+
+
+def test_stderr_non_unittest_summary_still_triggers_counts_from_stdout(tmp_path):
+    """Issue #12: printing a pytest-shaped summary to stderr bypassed counts_from_stdout."""
+    (tmp_path / "test_demo.py").write_text("def test_demo():\n    assert 1 + 1 == 2\n")
+    critic = PstackCritic(
+        test_command=("bash", "-c", "printf '3 passed in 0.1s\\n' >&2; exit 0")
+    )
+    report = critic.review_workspace(tmp_path)
+    assert report.passed is False
+    assert "counts_from_stdout" in {f.check for f in report.findings}
+
+
+def test_root_shadow_modules_suffix_tests_and_symlinks_are_contract(tmp_path):
+    """Issue #12: pluggy.py, unittest.py, *_test.py, and broken symlinks must be contract."""
+    (tmp_path / "test_a.py").write_text("def test_a():\n    assert 1 + 1 == 2\n")
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+    contract = critic.snapshot_contract(tmp_path)
+
+    (tmp_path / "pluggy.py").write_text("raise SystemExit(0)\n")
+    (tmp_path / "unittest.py").write_text("raise SystemExit(0)\n")
+    (tmp_path / "extra_test.py").write_text("def test_extra():\n    assert 1 == 1\n")
+    (tmp_path / "test_dangling.py").symlink_to("/nonexistent/sandbox/path.py")
+
+    findings = critic._check_contract(tmp_path, contract)
+    locations = {Path(f.location).name for f in findings}
+    assert {"pluggy.py", "unittest.py", "extra_test.py", "test_dangling.py"} <= locations
+
+
+def test_vault_retrieve_redacts_secrets_and_vector_store_dir_is_private(tmp_path, monkeypatch):
+    """Issue #13: VaultMemory.retrieve redacts secrets, redact catches GitHub/AWS tokens,
+    and VectorStore creates its parent directory with mode 0700."""
+    import os
+    import stat
+
+    from dacode.memory import VaultMemory
+    from dacode.memory.vectors import VectorStore
+    from dacode.redact import redact
+
+    assert "[REDACTED]" in redact("token ghp_1234567890abcdefghijklmnopqrstuv")
+    assert "[REDACTED]" in redact("key AKIAIOSFODNN7EXAMPLE")
+    assert "[REDACTED]" in redact("https://user:supersecretpassword123@github.com/org/repo.git")
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_text(
+        "---\ntitle: Key sk-1234567890abcdef12345678\n---\n"
+        "Body with ghp_1234567890abcdefghijklmnopqrstuv for testing.\n",
+        encoding="utf-8",
+    )
+    mem = VaultMemory(vault, semantic="off")
+    hits = mem.retrieve("testing")
+    assert hits
+    assert "sk-1234567890abcdef12345678" not in hits[0].title
+    assert "ghp_1234567890abcdefghijklmnopqrstuv" not in hits[0].snippet
+
+    vec_db = tmp_path / "vec_state" / "embeddings.db"
+    store = VectorStore(vec_db)
+    store.close()
+    assert stat.S_IMODE(os.stat(vec_db.parent).st_mode) == 0o700
+
+
+def test_variant_labels_strip_terminal_escape_sequences(tmp_path):
+    """Issue #13: LLM-proposed variant labels must not carry terminal escape sequences."""
+    from dacode.llm.stub import StubLLM
+
+    llm = StubLLM(
+        default='[{"label": "evil\\u001b]2;pwned\\u0007-variant", "system_prompt": "p"}]'
+    )
+    opt = HarnessOptimizer(
+        llm=llm,
+        sandbox=_Sandbox(tmp_path / "wt"),
+        executor=_CrashingExecutor(),
+        critic=PstackCritic(),
+        budget=1,
+        variants_per_round=1,
+    )
+    variants = opt.propose("task", HarnessVariant(label="base"), 1)
+    assert "\x1b" not in variants[0].label
+    assert "\x07" not in variants[0].label
+

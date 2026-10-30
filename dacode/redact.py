@@ -24,6 +24,11 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("anthropic", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{16,}")),
     ("huggingface", re.compile(r"\bhf_[A-Za-z0-9]{16,}")),
     ("openrouter", re.compile(r"\bsk-or-v1-[A-Za-z0-9]{16,}")),
+    ("github", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})")),
+    ("gitlab", re.compile(r"\bglpat-[A-Za-z0-9_\-]{16,}")),
+    ("slack", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{16,}")),
+    ("aws", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("url_userinfo", re.compile(r"(https?://[^/\s:@]+):[^/\s@]{8,}@")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}")),
     ("bearer", re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{12,}")),
     ("basic", re.compile(r"(?i)\b(basic)\s+[A-Za-z0-9+/=]{16,}")),
@@ -67,9 +72,12 @@ def redact(text: str) -> str:
 
 
 def _replace(match: re.Match[str]) -> str:
-    """Keep the scheme word (``Bearer``), drop the token."""
+    """Keep the scheme word (``Bearer``) or URL user prefix, drop the token."""
     if match.groups():
-        return f"{match.group(1)} {REDACTED}"
+        prefix = match.group(1)
+        if prefix.startswith(("http://", "https://")):
+            return f"{prefix}:{REDACTED}@"
+        return f"{prefix} {REDACTED}"
     return REDACTED
 
 

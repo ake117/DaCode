@@ -114,9 +114,11 @@ class HarnessOptimizer:
         for i, spec in enumerate(specs[:n]):
             if not isinstance(spec, dict):
                 continue
+            raw_label = str(spec.get("label", f"proposal-{i + 1}"))
+            clean_label = _sanitize_label(raw_label) or f"proposal-{i + 1}"
             variants.append(
                 HarnessVariant(
-                    label=str(spec.get("label", f"proposal-{i + 1}")),
+                    label=clean_label,
                     system_prompt=str(spec.get("system_prompt") or base.system_prompt),
                     tools=[str(t) for t in spec.get("tools", [])] or list(base.tools),
                     memory_snippets=list(base.memory_snippets),
@@ -583,6 +585,14 @@ def _family(model: str) -> str:
     """``anthropic/claude-sonnet-4`` and ``claude-sonnet-4`` share a family."""
     head = model.split("/")[0] if "/" in model else model
     return head.split("-")[0].lower()
+
+
+_CONTROL_SEQ_RE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-9;?]*[A-Za-z])|[\x00-\x1f\x7f]")
+
+
+def _sanitize_label(text: str) -> str:
+    """Strip terminal escape sequences and control characters from a variant label."""
+    return _CONTROL_SEQ_RE.sub("", text).strip()
 
 
 def _slug(text: str) -> str:

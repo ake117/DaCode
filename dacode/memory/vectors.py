@@ -54,7 +54,14 @@ class VectorStore:
     def __init__(self, path: str | Path | None = None) -> None:
         raw = path or os.environ.get("DACODE_EMBED_DB") or default_path()
         self.path = Path(raw).expanduser()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        parent = self.path.parent
+        created = not parent.exists()
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if created:
+            try:
+                os.chmod(parent, 0o700)
+            except OSError:
+                pass
         self._con = sqlite3.connect(str(self.path), timeout=10.0)
         self._con.executescript(_SCHEMA)
 

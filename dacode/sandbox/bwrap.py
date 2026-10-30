@@ -106,6 +106,21 @@ class IsolationPolicy:
 
 
 _AVAILABLE: bool | None = None
+_EMPTY_MASK: str | None = None
+
+
+def _empty_mask_file() -> str:
+    """Return a reusable 0-byte file on the host for masking hidden_files."""
+    import atexit
+
+    global _EMPTY_MASK
+    if _EMPTY_MASK is not None and os.path.isfile(_EMPTY_MASK):
+        return _EMPTY_MASK
+    fd, path = tempfile.mkstemp(prefix="dacode-empty-mask-")
+    os.close(fd)
+    _EMPTY_MASK = path
+    atexit.register(lambda p=path: Path(p).unlink(missing_ok=True))
+    return path
 
 
 def available(*, probe: bool = True) -> bool:
@@ -230,16 +245,18 @@ def wrap_command(
             argv += ["--ro-bind", str(candidate), str(candidate)]
 
     # Writable binds come before the masks: a hidden file inside a writable
-    # directory (the agent's auth.json under a writable ~/.pi) must stay hidden.
+    # directory (the agent's auth.json under a writable ~/.pi, or <repo>/.env
+    # inside workspace_path during measure_baseline) must stay hidden.
     for extra in policy.writable_paths:
         target = Path(extra).expanduser().resolve()
         if target.is_dir():
             argv += ["--bind", str(target), str(target)]
 
-    # Protected re-binds come after the writable binds so they shadow them: a
-    # read-only mount on a child of a writable parent is the only way the child
-    # actually stays read-only (later mounts win). The gate's writable JUnit
-    # directory has no protected overlap, so this is a no-op for it.
+    argv += ["--bind", str(workspace_path), str(workspace_path)]
+
+    # Protected re-binds come after the writable binds (including workspace_path)
+    # so they shadow them: a read-only mount on a child of a writable parent is
+    # the only way the child actually stays read-only (later mounts win).
     for extra in policy.protected_paths:
         target = Path(extra).expanduser().resolve()
         if target.exists():
@@ -255,14 +272,12 @@ def wrap_command(
         Path(h).expanduser().exists() and not Path(h).expanduser().is_dir()
         for h in policy.hidden_files
     ):
-        fd, empty = tempfile.mkstemp(prefix="dacode-empty-mask-")
-        os.close(fd)
+        empty = _empty_mask_file()
         for hidden in policy.hidden_files:
             target = Path(hidden).expanduser()
             if target.exists() and not target.is_dir():
                 argv += ["--ro-bind", empty, str(target.resolve())]
 
-    argv += ["--bind", str(workspace_path), str(workspace_path)]
     argv += ["--chdir", str(workspace_path)]
 
     environment = allowed_env(policy, env)
