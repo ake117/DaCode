@@ -35,10 +35,15 @@ provider API keys in the environment, and anything reachable over the network.
 
 ## Known open items (do not assume these are handled)
 
-1. **Non-pytest runners still count from stdout.** A `make test` or `npm test`
-   command gets no JUnit report, so a printed summary is again the only signal;
-   the test-integrity and infrastructure guards still apply, but there is no
-   authoritative count. Use a runner that can emit JUnit, or wrap it.
+1. **Non-Python runners still count from stdout.** A `make test` or `npm test`
+   command gets no JUnit report, so a printed summary is again the only signal.
+   For Python suites this part is enforced, not advice: when the workspace has
+   Python test files, a green run whose counts were parsed only from stdout is
+   an error (`counts_from_stdout`) — make the command name pytest (the gate
+   attaches `--junitxml` itself, also inside `bash -c` scripts) or wrap the
+   runner so pytest writes one. Suites in other languages have no report to
+   attach and keep the stdout count, with the test-integrity and infrastructure
+   guards still applying; treat their results as unproven and read the diff.
 2. **`/sys` stays mounted read-only.** No secrets live there, but host topology,
    device names and some CPU information are visible to a trial.
 3. **The rest of `~/.pi` is bound** into the executor sandbox (only
