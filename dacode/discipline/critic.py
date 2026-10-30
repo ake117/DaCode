@@ -216,7 +216,12 @@ class PstackCritic:
         finally:
             pass
 
-        xml_counts = _junit_counts(junit) if junit is not None else None
+        xml_counts = None
+        junit_shaped = False
+        if junit is not None:
+            parsed = _junit_counts(junit, stdout=proc.stdout)
+            if parsed is not None:
+                xml_counts, junit_shaped = parsed
         stdout_counts = _parse_test_counts(proc.stdout)
         if stdout_counts[0] == 0 and proc.stderr:
             # unittest writes its progress dots and summary to stderr, not
@@ -232,6 +237,7 @@ class PstackCritic:
             xml_counts is not None
             and xml_counts[0] > 0
             and stdout_counts[0] > 0        # silence is not a disagreement
+            and not junit_shaped            # subTest totals count units, not elements
             and xml_counts != stdout_counts
         ):
             # The report is written by pytest itself outside the workspace; a
@@ -602,8 +608,41 @@ def _pytest_like(command: Sequence[str]) -> bool:
     return any("pytest" in str(token) for token in command)
 
 
-def _junit_counts(path: Path) -> tuple[int, int, int] | None:
-    """``(total, failed, skipped)`` from a JUnit XML report, or None.
+_PYTEST_SUMMARY_UNIT_RE = re.compile(
+    r"(\d+)\s+(subtests?\s+(?:passed|failed)|xpassed|xfailed|errors?|passed|failed|skipped)\b"
+)
+_PYTEST_SUMMARY_LINE_RE = re.compile(r"\bin\s+\d+(?:\.\d+)?s\s*$")
+
+
+def _pytest_summary_units(stdout: str) -> int | None:
+    """Sum the per-outcome unit counts on pytest's final summary line, or None.
+
+    ``unittest.subTest`` makes pytest report more units than it emits ``<testcase>``
+    elements for (passing subtests are folded into the declared total with no element
+    of their own, measured against pytest 9.1.1), so an element-only reading can never
+    reach the declared ``tests=``. This parses the summary line the gate captured
+    itself from the suite's stdout — "4 failed, 2 passed, 2 skipped, 11 subtests passed
+    in 0.3s" — and sums the units, ``warning`` tokens excluded. Returns None when the
+    output has no pytest summary line at all (silenced or non-pytest runner), so the
+    caller cannot accept a shaped report on the strength of nothing.
+    """
+    for line in reversed(_strip_ansi(stdout).splitlines()):
+        stripped = line.strip().strip("=").strip()
+        if not stripped:
+            continue
+        if not _PYTEST_SUMMARY_LINE_RE.search(stripped):
+            continue
+        units = _PYTEST_SUMMARY_UNIT_RE.findall(stripped)
+        if not units:
+            continue
+        return sum(int(count) for count, _outcome in units)
+    return None
+
+
+def _junit_counts(
+    path: Path, stdout: str = ""
+) -> tuple[tuple[int, int, int], bool] | None:
+    """``((total, failed, skipped), subtest_shaped)`` from a JUnit XML report, or None.
 
     The report is written outside the workspace and parsed here on the host, so the
     numbers cannot be printed by the code under test. Two independent readings must
@@ -612,6 +651,16 @@ def _junit_counts(path: Path) -> tuple[int, int, int] | None:
     suite declares. A report whose declared totals do not match its own test cases is
     not a report — that is exactly the shape of a rewritten one (audit, Oct 2026:
     a module imported by the suite rewrote tests="1" to tests="999" at exit).
+
+    One honest exception exists. ``unittest.subTest`` folds every passing subtest into
+    the declared total without emitting an element for it (measured: a suite declaring
+    tests="11" yields 6 elements, while failures and skips still reconcile exactly
+    through ``<failure>``/``<skipped>`` children). A report may exceed its element
+    total only when the failures and skips match exactly AND pytest's own summary
+    line, captured by the gate from the run's stdout, accounts for the declared total
+    unit by unit. The audited rewrite keeps failing that check — bumping an attribute
+    produces no matching summary line — and a silenced stdout cannot corroborate
+    anything, so both stay fail-closed.
     """
     try:
         tree = xml.parse(path)
@@ -637,8 +686,16 @@ def _junit_counts(path: Path) -> tuple[int, int, int] | None:
             skipped += 1
 
     if (declared_total, declared_failed, declared_skipped) != (total, failed, skipped):
+        if (
+            declared_failed == failed
+            and declared_skipped == skipped
+            and declared_total > total
+        ):
+            units = _pytest_summary_units(stdout)
+            if units is not None and units == declared_total:
+                return (total, failed, skipped), True
         return None
-    return total, failed, skipped
+    return (total, failed, skipped), False
 
 
 def _gate_env() -> dict[str, str]:
