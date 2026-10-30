@@ -218,6 +218,15 @@ class PstackCritic:
 
         xml_counts = _junit_counts(junit) if junit is not None else None
         stdout_counts = _parse_test_counts(proc.stdout)
+        if stdout_counts[0] == 0 and proc.stderr:
+            # unittest writes its progress dots and summary to stderr, not
+            # stdout: a fully green `python -m unittest` suite used to read as
+            # "no tests were collected" (0/0) and every honest trial failed.
+            # Only fall back when stdout is silent, so pytest summaries — and
+            # anything printed around them — keep meaning exactly what they meant.
+            stderr_counts = _parse_test_counts(proc.stderr)
+            if stderr_counts[0] > 0:
+                stdout_counts = stderr_counts
         note = None
         if (
             xml_counts is not None
@@ -253,7 +262,9 @@ class PstackCritic:
 
     def _neutralised_run(self, workspace: Path) -> tuple[int, str, str, int, int, int, str | None] | None:
         """Re-run with ``-o addopts=`` so a quiet project config cannot look like 0 tests."""
-        if not self.test_command:
+        if not self.test_command or not _pytest_like(self.test_command):
+            # ``-o addopts=`` is a pytest flag: appending it to a unittest or
+            # custom command breaks the re-run instead of un-quieting it.
             return None
         cmd = [*self.test_command, "-o", "addopts="]
         result = self._run_once(cmd, workspace)
@@ -667,8 +678,11 @@ def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
             if match:
                 skipped = int(match.group(1))
             else:
-                # PHPUnit spells it "Skipped: 1", not "1 skipped".
-                match = re.search(r"\bSkipped:\s*(\d+)", stripped)
+                # PHPUnit spells it "Skipped: 1", not "1 skipped"; unittest
+                # puts the count after an equals sign: "OK (skipped=1)".
+                match = re.search(r"\bSkipped:\s*(\d+)", stripped) or re.search(
+                    r"\bskipped=(\d+)", stripped, re.I
+                )
                 if match:
                     skipped = int(match.group(1))
             break
@@ -688,14 +702,53 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _parse_unittest_summary(lines: list[str]) -> tuple[int, int] | None:
+    """stdlib unittest's two-line summary: ``(total, failed)``, or None.
+
+        ----------------------------------------------------------------------
+        Ran 25 tests in 0.123s
+
+        OK (skipped=1)                          green
+        FAILED (failures=2, errors=1)           red
+
+    The verdict line carries the failure counts, so it only counts together with
+    its ``Ran`` line; a ``Ran`` with no verdict below means the run was cut short
+    and stays uncounted — the zero-total "no tests" verdict is honest there.
+    """
+    import re
+
+    for index in range(len(lines) - 1, -1, -1):
+        match = re.search(r"\bRan\s+(\d+)\s+tests?\b", lines[index])
+        if match is None:
+            continue
+        total = int(match.group(1))
+        for verdict in lines[index + 1 : index + 4]:
+            verdict = verdict.strip()
+            if not verdict or set(verdict) <= {"-"}:
+                continue
+            if verdict.startswith("OK"):
+                return total, 0
+            if verdict.startswith("FAILED"):
+                failed = 0
+                for key in ("failures", "errors"):
+                    sub = re.search(rf"\b{key}=(\d+)", verdict)
+                    if sub:
+                        failed += int(sub.group(1))
+                return total, failed
+            break  # there is a line, but it is not a verdict: not this shape
+    return None
+
+
 def _parse_test_summary(stdout: str) -> tuple[int, int]:
     """Extract ``(total, failed)`` from a test run's stdout.
 
-    Understands pytest's summary line *and* the common custom-runner shapes, so
-    a non-Python suite (Makefile/C, JS, …) is counted correctly too::
+    Understands pytest's summary line, stdlib unittest's two-line summary *and*
+    the common custom-runner shapes, so a non-Python suite (Makefile/C, JS, …)
+    is counted correctly too::
 
         "3 passed, 1 failed in 0.2s"        pytest
         "2 passed in 0.15s"                 pytest, all green
+        "Ran 25 tests in 0.123s" + "OK"     unittest
         "90 checks, 0 failed"               Makefile / C suite
         "OK: 66 checks passed (headless)"   Makefile / C suite
 
@@ -703,6 +756,10 @@ def _parse_test_summary(stdout: str) -> tuple[int, int]:
     zero total as "no tests were collected".
     """
     import re
+
+    unittest_counts = _parse_unittest_summary(_strip_ansi(stdout).splitlines())
+    if unittest_counts is not None:
+        return unittest_counts
 
     for line in reversed(_strip_ansi(stdout).splitlines()):
         stripped = line.strip().strip("=").strip()

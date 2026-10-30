@@ -110,6 +110,73 @@ def test_interpreter_root_finds_an_absolute_python():
 
 # --- components refuse to pretend ------------------------------------------
 
+def test_provider_env_aliases_the_zai_key_for_pi(monkeypatch):
+    """DaCode's registry names the z.ai key GLM_API_KEY; Pi's provider layer
+    reads ZAI_API_KEY for the same provider id (verified: Pi 1.4 exits with
+    "No API key found for zai" without the alias)."""
+    from dacode.executor.pi import provider_env
+
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    assert provider_env("zai", {"GLM_API_KEY": "sk-one"}) == {"GLM_API_KEY": "sk-one", "ZAI_API_KEY": "sk-one"}
+    # an existing ZAI_API_KEY always wins
+    assert provider_env("zai", {"GLM_API_KEY": "a", "ZAI_API_KEY": "b"})["ZAI_API_KEY"] == "b"
+    # nothing is invented for other providers or a missing key
+    assert provider_env("openrouter", {"GLM_API_KEY": "a"}) == {"GLM_API_KEY": "a"}
+    assert provider_env("zai", {}) == {}
+    assert provider_env(None, {"GLM_API_KEY": "a"}) == {"GLM_API_KEY": "a"}
+
+
+def test_pi_executor_passes_the_aliased_env_to_pi(tmp_path, monkeypatch):
+    """run() must hand the alias to the real subprocess, not just compute it."""
+    import types
+
+    from dacode.executor.pi import provider_env
+
+    seen = {}
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs.get("env") or {})
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("dacode.executor.pi.subprocess.run", fake_run)
+    monkeypatch.setattr("dacode.executor.pi.shutil.which", lambda cmd: f"/usr/bin/{cmd}")
+    monkeypatch.setenv("GLM_API_KEY", "sk-alias-test")
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+
+    executor = PiExecutor(provider="zai", isolation=None)
+    result = executor.run(_variant(), tmp_path)
+
+    assert result.exit_code == 0
+    assert seen.get("ZAI_API_KEY") == "sk-alias-test"
+    assert provider_env("zai", {"GLM_API_KEY": "sk-alias-test"})["ZAI_API_KEY"] == "sk-alias-test"
+
+
+def test_sandbox_policy_binds_the_node_runtime(tmp_path, monkeypatch):
+    """Node installed under $HOME (nvm/fnm/volta) is hidden by the home tmpfs;
+    the policy must bind the runtime the way it binds the agent binary, or
+    `env node` falls through to an older system interpreter."""
+    fake_node = tmp_path / "node-22" / "bin" / "node"
+    fake_node.parent.mkdir(parents=True)
+    fake_node.write_text("#!/bin/sh\n")
+    fake_pi = tmp_path / "pi-agent" / "bin" / "pi"
+    fake_pi.parent.mkdir(parents=True)
+    fake_pi.write_text("#!/bin/sh\n")
+
+    monkeypatch.setattr(
+        "dacode.executor.pi.shutil.which",
+        lambda cmd: str(fake_node) if cmd == "node" else (str(fake_pi) if cmd == "pi" else None),
+    )
+    monkeypatch.delenv("NODE_PATH", raising=False)
+
+    executor = PiExecutor(isolation=IsolationPolicy(enabled=True))
+    policy = executor._sandbox_policy(str(fake_pi))
+
+    assert Path(fake_node).resolve() in policy.read_only_paths
+    assert fake_node.resolve().parent in policy.read_only_paths
+
+
 def test_pi_executor_reports_a_missing_sandbox_instead_of_running(monkeypatch, tmp_path):
     monkeypatch.setattr(bwrap_mod, "available", lambda: False)
     monkeypatch.setattr("dacode.executor.pi.shutil.which", lambda cmd: f"/usr/bin/{cmd}")
