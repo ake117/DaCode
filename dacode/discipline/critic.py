@@ -143,7 +143,7 @@ class PstackCritic:
         green without proving anything; the baseline is what makes that visible.
         """
         try:
-            _exit, _out, _err, total, _failed, skipped, _note, _from_report = self._run_tests(
+            _exit, _out, _err, total, _failed, skipped, _note, _source = self._run_tests(
                 Path(repo)
             )
         except Exception:  # noqa: BLE001 - a missing baseline must never block a run
@@ -226,6 +226,7 @@ class PstackCritic:
 
         xml_counts = None
         junit_shaped = False
+        counts_source = "stdout"
         if junit is not None:
             parsed = _junit_counts(junit, stdout=proc.stdout)
             if parsed is not None:
@@ -240,6 +241,7 @@ class PstackCritic:
             stderr_counts = _parse_test_counts(proc.stderr)
             if stderr_counts[0] > 0:
                 stdout_counts = stderr_counts
+                counts_source = "unittest_summary"
         note = None
         if (
             xml_counts is not None
@@ -260,10 +262,11 @@ class PstackCritic:
             # something ended the process before pytest could write it.
             note = (note + " " if note else "") + "counts_unavailable:no junit report"
         counts = xml_counts if (xml_counts and xml_counts[0] > 0) else stdout_counts
-        from_report = bool(xml_counts and xml_counts[0] > 0)
+        if xml_counts and xml_counts[0] > 0:
+            counts_source = "report"
         if junit_dir is not None:
             shutil.rmtree(junit_dir, ignore_errors=True)
-        return proc.returncode, proc.stdout, proc.stderr, *counts, note, from_report
+        return proc.returncode, proc.stdout, proc.stderr, *counts, note, counts_source
 
     def _run_tests(
         self, workspace: Path
@@ -500,7 +503,7 @@ class PstackCritic:
             findings.extend(self._check_contract(workspace, contract))
         else:
             findings.extend(self._check_test_integrity(workspace))
-        exit_code, stdout, stderr, total, failed, skipped, counts_note, from_report = (
+        exit_code, stdout, stderr, total, failed, skipped, counts_note, counts_source = (
             self._run_tests(workspace)
         )
         if counts_note and "counts_unavailable" in counts_note:
@@ -531,11 +534,15 @@ class PstackCritic:
         # A printed summary is the suite grading its own homework. For a Python
         # suite that is never necessary: pytest can always emit the JUnit report
         # the gate already attaches, so a green run counted only from stdout is
-        # refused outright (SECURITY.md open item 1, enforced). Non-Python suites
-        # (C/JS/PHPUnit) have no report to attach and keep the stdout count —
-        # the test-integrity and infrastructure guards still apply to them.
+        # refused outright (SECURITY.md open item 1, enforced). Two exemptions,
+        # both about what a suite *can* emit, not what it prints:
+        # - a report-backed run is the authoritative source;
+        # - a stdlib unittest suite has no report at all — its deterministic
+        #   two-line stderr summary is the only count that exists (residual 7
+        #   covers the forgery shape). Non-Python suites (C/JS/PHPUnit) keep
+        #   the stdout count; the integrity and infrastructure guards still apply.
         if (
-            not from_report
+            counts_source == "stdout"
             and exit_code == 0
             and total > 0
             and py_test_files > 0

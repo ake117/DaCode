@@ -80,3 +80,24 @@ def test_a_non_python_suite_keeps_its_stdout_count(tmp_path):
 
     assert report.passed is True
     assert "counts_from_stdout" not in {f.check for f in report.findings}
+
+
+def test_a_stdlib_unittest_suite_is_exempt_the_refusal_targets_stdout_only(tmp_path):
+    """unittest has no report to attach: its deterministic two-line stderr
+    summary is the only count that exists, so the refusal must not fire on it
+    (the guard is about *printed* summaries, not about reports)."""
+    (tmp_path / "test_math.py").write_text(
+        "import unittest\n"
+        "\n"
+        "class MathTest(unittest.TestCase):\n"
+        "    def test_add(self):\n"
+        "        self.assertEqual(1 + 1, 2)\n"
+    )
+    critic = PstackCritic(
+        isolation=None,
+        test_command=("bash", "-c", "python3 -m unittest test_math -v"),
+    )
+    report = critic.review_workspace(tmp_path)
+    checks = [f.check for f in report.findings]
+    assert "counts_from_stdout" not in checks
+    assert report.passed
