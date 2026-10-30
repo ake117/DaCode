@@ -25,7 +25,7 @@ provider API keys in the environment, and anything reachable over the network.
 | Suite size | the collected count may not fall below the baseline (dynamic, or the static `def test_*` count when collection fails), skips may not rise | `tests_lost`, `tests_skipped` |
 | Gate authority | only gate-passing variants are candidates for composition; a judge may pick among passes, never over one | `compose()`, `_variant_score()` |
 | Gate network | with isolation on, the gate never gets a network namespace or provider keys | separate `gate_isolation` policy |
-| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, private `/proc`, `/dev`, `/tmp`, `/run`, `/var/tmp`, workspace-only writes plus the gate's own report directory, allow-listed environment | `dacode/sandbox/bwrap.py` |
+| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, private `/proc`, `/dev`, `/tmp`, `/run`, `/var/tmp`, workspace-only writes plus the gate's own report directory, allow-listed environment; a `protected_paths` entry stays read-only even under a writable parent (later mounts shadow earlier ones, so the re-bind is emitted last) | `dacode/sandbox/bwrap.py` |
 | Credentials in the sandbox | `$HOME`, its ancestors and credential paths under it are never bound; `<repo>/.env` and `~/.pi/agent/auth.json` are masked with `/dev/null`; plugin autoloading is off | `_bind_candidates`, `hidden_files`, `_gate_env` |
 | Secrets in state | the state directory is created `0700` on first use (not inherited from the umask) and the runlog is `0700` on every write; events and lesson text are redacted (`sk-`, `gsk_`, `AIza`, `hf_`, JWTs, `Bearer`/`Basic`, and the values of known key variables) before they are written | `dacode/redact.py`, `runlog.record`, `_build_lesson` |
 | Host-side git | `checkpoint()` refuses a worktree whose `.git` is not a pointer file and runs git with hooks and fsmonitor disabled | `GitSandbox.checkpoint` |
@@ -41,9 +41,12 @@ provider API keys in the environment, and anything reachable over the network.
    authoritative count. Use a runner that can emit JUnit, or wrap it.
 2. **`/sys` stays mounted read-only.** No secrets live there, but host topology,
    device names and some CPU information are visible to a trial.
-3. **The rest of `~/.pi` is bound** into the executor sandbox (only
-   `agent/auth.json` is masked). Agent config and logs are readable; treat them as
-   non-secret.
+3. **The rest of `~/.pi` is bound writable** into the executor sandbox (pi 1.4
+   needs a lock file next to its settings; `agent/auth.json` is masked, and the
+   agent's binary directory is re-bound read-only on top of the writable mount,
+   so a trial cannot replace the executable the host runs). Agent config, logs
+   and settings remain writable by the trial; treat what a future pi run loads
+   from `~/.pi` as possibly influenced by a trial.
 4. **`DACODE_ENV_TRUST=1` is a real escape hatch.** It restores the old behaviour of
    importing every key from a repository's `.env`. It prints a warning on stderr;
    never set it for a repository you do not own.
