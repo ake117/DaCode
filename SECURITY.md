@@ -64,6 +64,17 @@ provider API keys in the environment, and anything reachable over the network.
    indistinguishable from a real one. This is inherent to gating on a repository's
    own tests — CI has the same property. The gate is a filter, not a proof: test
    files and gate infrastructure are contract-checked, and the diff still gets read.
+8. **Vault lessons are a cross-run influence channel.** A run whose trial passes
+   the gate writes a lesson into the shared vault — including the *system prompt
+   that won* (`DaCodeRig._build_lesson`). The next run seeds its executor with
+   retrieved lessons (`run_task` collects `memory.retrieve` hits into
+   `memory_snippets`; the pi executor passes each one as
+   `--append-system-prompt`). Secrets are redacted on write and on display, but
+   *instructions* are not filtered: a hostile repository whose trial passes the
+   gate can plant a lesson that shapes later runs on any repository sharing that
+   vault — the sandbox contains a trial's process, not its prose. Keep one vault
+   per trust domain, or read the lessons (`dacode memory search`) before pointing
+   a new repository at a vault that hostile work has written to.
 
 ## Running safely today
 
