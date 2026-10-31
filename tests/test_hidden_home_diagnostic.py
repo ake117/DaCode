@@ -4,7 +4,9 @@ The sandbox hides $HOME by design, so a suite importing a user-site package
 dies with an opaque "No module named X". The gate must name the cause and the
 way out instead of leaving a riddle in the log. Reproduced end to end with a
 fake home: the package exists only under <fake-home>/.local, the sandboxed
-run cannot see it, and the finding says exactly that.
+run cannot see it, and the finding says exactly that. The runner is a plain
+"python3 -c import" on purpose — the diagnostic is about a missing module,
+not about pytest, so the test must not depend on any interpreter's packages.
 """
 
 from __future__ import annotations
@@ -13,6 +15,9 @@ from pathlib import Path
 
 from dacode.config import DaCodeConfig
 from dacode.orchestrator import DaCodeRig
+
+ROGUE = ("bash", "-c", "python3 -c \"import fakepkg\"")
+GHOST = ("bash", "-c", "python3 -c \"import module_that_nowhere_exists\"")
 
 
 def test_a_user_site_import_failure_names_the_home_hidden_cause(tmp_path, monkeypatch):
@@ -28,8 +33,7 @@ def test_a_user_site_import_failure_names_the_home_hidden_cause(tmp_path, monkey
     )
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
 
-    cfg = DaCodeConfig(repo=workspace, isolate="bwrap",
-                       test_command=("/usr/bin/python3", "-m", "pytest", "-q"))
+    cfg = DaCodeConfig(repo=workspace, isolate="bwrap", test_command=ROGUE)
     rig = DaCodeRig(cfg)
     report = rig.critic.review_workspace(workspace)
 
@@ -46,8 +50,7 @@ def test_a_genuinely_missing_module_gets_no_false_diagnostic(tmp_path, monkeypat
     (workspace / "test_calc.py").write_text(
         "import module_that_nowhere_exists\n\ndef test_x():\n    assert True\n"
     )
-    cfg = DaCodeConfig(repo=workspace, isolate="bwrap",
-                       test_command=("/usr/bin/python3", "-m", "pytest", "-q"))
+    cfg = DaCodeConfig(repo=workspace, isolate="bwrap", test_command=GHOST)
     rig = DaCodeRig(cfg)
     report = rig.critic.review_workspace(workspace)
     assert "hidden_home_packages" not in [f.check for f in report.findings]
