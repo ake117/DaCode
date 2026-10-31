@@ -201,6 +201,8 @@ class HarnessOptimizer:
                 elapsed_s=round(time.perf_counter() - started, 3),
                 tests_skipped=getattr(report, "tests_skipped", 0),
                 model=variant.model or getattr(self.executor, "model", None),
+                gate_output=(getattr(report, "stdout", "") or "")[-4000:],
+                errors=[f.check for f in getattr(report, "findings", []) if f.severity == "error"],
             )
         except Exception as exc:  # noqa: BLE001 - a failed trial must not kill the run
             result = ProbeResult(

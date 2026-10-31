@@ -2,6 +2,7 @@
 
 Usage:
   dacode run "<task>" [--budget N] [--llm KIND] [--executor pi|script] ...
+  dacode kanban work <task_id> [--board SLUG] [run options]
   dacode memory search "<query>"
   dacode sandbox list | clean
   dacode layers
@@ -27,6 +28,79 @@ from dacode.sandbox import GitSandbox
 __all__ = ["main", "build_parser"]
 
 
+def _add_run_options(p: argparse.ArgumentParser) -> None:
+    """Options shared by `run` and `kanban work` — one card is one rig run."""
+    p.add_argument("--budget", type=int, default=2, help="Harness² recursion rounds")
+    p.add_argument("--variants", type=int, default=2, help="variants proposed per round")
+    p.add_argument(
+        "--llm",
+        default=None,
+        help="stub | local | " + " | ".join(provider_names()),
+    )
+    p.add_argument("--model", default=None, help="model id for the chosen backend")
+    p.add_argument("--executor", default=None, choices=["pi", "script"])
+    p.add_argument(
+        "--executor-provider",
+        default=None,
+        help='provider id the pi executor logs in with, e.g. "zai" (default: openrouter)',
+    )
+    p.add_argument("--script-command", default=None, help="command for --executor script")
+    p.add_argument(
+        "--test-command",
+        default=None,
+        help="shell command that runs the project's tests "
+        "(default: python -m pytest -q); run via bash -c inside the trial worktree",
+    )
+    p.add_argument(
+        "--test-glob",
+        default=None,
+        help="glob for static test scanning (default: test_*.py)",
+    )
+    p.add_argument("--keep-worktree", action="store_true", help="keep losing trial worktrees")
+    p.add_argument(
+        "--variant-timeout",
+        type=float,
+        default=None,
+        help="seconds a single variant may spend executing (default: 900)",
+    )
+    p.add_argument(
+        "--isolate",
+        choices=["none", "bwrap"],
+        default=None,
+        help="sandbox trials and the test gate with bubblewrap (default: bwrap; "
+        "pass --isolate none to run on the host)",
+    )
+    p.add_argument(
+        "--isolate-network",
+        action="store_true",
+        help="allow the sandboxed trial to open sockets (an agent needs this)",
+    )
+    p.add_argument(
+        "--fleet",
+        default=None,
+        help="comma-separated models probed side by side, e.g. "
+        "'deepseek/deepseek-v4.1-flash,anthropic/claude-sonnet-4'",
+    )
+    p.add_argument(
+        "--parallel",
+        type=int,
+        default=None,
+        help="probe this many variants at once (default: 1; worktree creation stays serialised)",
+    )
+    p.add_argument(
+        "--escalate-models",
+        default=None,
+        help="comma-separated model ladder for the judge's escalate_model "
+        "triage action (e.g. 'claude-sonnet-4-5,gpt-4o')",
+    )
+    p.add_argument(
+        "--judge",
+        default=None,
+        help="bounded-decision judge for compose: 'jev' = TypeSafe System One "
+        "(unset = off)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dacode",
@@ -39,75 +113,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="run a task through the full 5-layer rig")
     run.add_argument("task", help="the engineering task, in plain language")
-    run.add_argument("--budget", type=int, default=2, help="Harness² recursion rounds")
-    run.add_argument("--variants", type=int, default=2, help="variants proposed per round")
-    run.add_argument(
-        "--llm",
-        default=None,
-        help="stub | local | " + " | ".join(provider_names()),
+    _add_run_options(run)
+
+    kanban = sub.add_parser("kanban", help="work cards from a Hermes Kanban board")
+    kanban_sub = kanban.add_subparsers(dest="kanban_command", required=True)
+    kwork = kanban_sub.add_parser(
+        "work", help="claim one card, run it through the rig, complete or block it"
     )
-    run.add_argument("--model", default=None, help="model id for the chosen backend")
-    run.add_argument("--executor", default=None, choices=["pi", "script"])
-    run.add_argument(
-        "--executor-provider",
-        default=None,
-        help='provider id the pi executor logs in with, e.g. "zai" (default: openrouter)',
-    )
-    run.add_argument("--script-command", default=None, help="command for --executor script")
-    run.add_argument(
-        "--test-command",
-        default=None,
-        help="shell command that runs the project's tests "
-        "(default: python -m pytest -q); run via bash -c inside the trial worktree",
-    )
-    run.add_argument(
-        "--test-glob",
-        default=None,
-        help="glob for static test scanning (default: test_*.py)",
-    )
-    run.add_argument("--keep-worktree", action="store_true", help="keep losing trial worktrees")
-    run.add_argument(
-        "--variant-timeout",
-        type=float,
-        default=None,
-        help="seconds a single variant may spend executing (default: 900)",
-    )
-    run.add_argument(
-        "--isolate",
-        choices=["none", "bwrap"],
-        default=None,
-        help="sandbox trials and the test gate with bubblewrap (default: bwrap; "
-        "pass --isolate none to run on the host)",
-    )
-    run.add_argument(
-        "--isolate-network",
-        action="store_true",
-        help="allow the sandboxed trial to open sockets (an agent needs this)",
-    )
-    run.add_argument(
-        "--fleet",
-        default=None,
-        help="comma-separated models probed side by side, e.g. "
-        "'deepseek/deepseek-v4.1-flash,anthropic/claude-sonnet-4'",
-    )
-    run.add_argument(
-        "--parallel",
-        type=int,
-        default=None,
-        help="probe this many variants at once (default: 1; worktree creation stays serialised)",
-    )
-    run.add_argument(
-        "--escalate-models",
-        default=None,
-        help="comma-separated model ladder for the judge's escalate_model "
-        "triage action (e.g. 'claude-sonnet-4-5,gpt-4o')",
-    )
-    run.add_argument(
-        "--judge",
-        default=None,
-        help="bounded-decision judge for compose: 'jev' = TypeSafe System One "
-        "(unset = off)",
-    )
+    kwork.add_argument("task_id", help="Kanban card id, e.g. t_1485ddf4")
+    kwork.add_argument("--board", default=None, help="board slug (default: DACODE_KANBAN_BOARD or the current board)")
+    kwork.add_argument("--ttl", type=int, default=None, help="claim TTL in seconds (default: covers the whole run)")
+    _add_run_options(kwork)
 
     mcp = sub.add_parser("mcp", help="serve memory + run history over MCP (stdio)")
     mcp.add_argument(
@@ -411,6 +427,14 @@ def main(argv: list[str] | None = None) -> int:
             count = state.rebuild()
             print(f"rebuilt from {count} runlog event(s)")
             return 0
+
+    if args.command == "kanban":
+        from dacode.kanban import HermesKanban, make_rig_runner, work
+
+        cfg = _make_config(args)
+        # The claim must outlive every round, or a second worker can take the card.
+        ttl = args.ttl or int(cfg.budget * cfg.variants_per_round * cfg.variant_timeout) + 600
+        return work(args.task_id, HermesKanban(args.board), make_rig_runner(cfg), ttl=ttl)
 
     if args.command == "run":
         cfg = _make_config(args)

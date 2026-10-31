@@ -51,6 +51,8 @@ class ProbeResult:
     model: str | None = None
     stdout: str = ""
     stderr: str = ""
+    gate_output: str = ""  # tail of the critic's own test run, not the executor's chatter
+    errors: list[str] = field(default_factory=list)  # error-level critic findings, e.g. "tests_modified"
 
     def as_dict(self) -> dict:
         return {

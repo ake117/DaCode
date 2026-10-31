@@ -371,3 +371,35 @@ def test_rig_runner_explains_a_failure(git_repo: Path):
     out = run_card("t", "true", None)
     assert out.passed is False
     assert out.reason  # never an empty block reason
+
+
+def test_rig_runner_explains_a_run_that_probed_nothing(git_repo: Path):
+    class EmptyRig:
+        def __init__(self, cfg):
+            pass
+
+        def run_task(self, task):
+            return HarnessResult(task=task, rounds=2, best=HarnessVariant(), passed=False)
+
+    out = make_rig_runner(DaCodeConfig(repo=git_repo), rig_factory=EmptyRig)("t", "true", None)
+    assert out.passed is False and out.worktree is None
+    assert "2 round" in out.reason
+
+
+def test_rig_runner_reports_the_gate_run_and_the_critic_errors(git_repo: Path):
+    class TamperRig:
+        def __init__(self, cfg):
+            pass
+
+        def run_task(self, task):
+            probe = ProbeResult(
+                variant_id="v1", workspace=str(git_repo), exit_code=0, tests_total=4,
+                tests_passed=1, stdout="agent chatter", gate_output="== 3 failed, 1 passed ==",
+                errors=["tests_modified", "tests_modified"],
+            )
+            best = HarnessVariant(probe=probe)
+            return HarnessResult(task=task, rounds=1, best=best, variants=[best], passed=False)
+
+    out = make_rig_runner(DaCodeConfig(repo=git_repo), rig_factory=TamperRig)("t", "true", None)
+    assert "3 failed" in out.output_tail and "agent chatter" not in out.output_tail
+    assert out.reason.count("tests_modified") == 1
