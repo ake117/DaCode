@@ -359,6 +359,42 @@ mcp_servers:
 
 Then `hermes mcp test dacode-memory` should report 5 tools.
 
+### Kanban worker
+
+`dacode kanban work` takes one card from a [Hermes Kanban](https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban)
+board and reports back with evidence. The card body carries its own gate:
+
+````markdown
+Make `tests/test_slug.py` pass. Do NOT modify the test file.
+
+```gate
+python3 -m pytest -q tests/test_slug.py
+```
+````
+
+```bash
+dacode kanban work t_1485ddf4 --board myboard \
+  --executor pi --llm zai --model glm-5.3-flash --isolate-network
+```
+
+1. **claim** first (`hermes kanban claim`, atomic). A card someone else holds
+   exits `3` and nothing runs — no card is worked twice. The claim TTL covers
+   `budget × variants × variant-timeout` (+10 min) unless `--ttl` is given.
+2. **gate** — the first ```` ```gate ```` block becomes the test command. No gate →
+   `block --kind needs_input`, exit `2`.
+3. **run** — the rig runs under `--isolate bwrap` (always, for cards). A card whose
+   workspace is a git checkout (`--workspace dir:<repo>`) is worked there;
+   otherwise `--repo`.
+4. **report** — pass → `complete` with `--metadata` (gate, gate output, tests
+   passed/total, changed files, winning worktree, runlog path), exit `0`;
+   fail or a rig error → `block` with tests x/y and the reason, exit `1`. A lost
+   claim at the end is exit `4`, never a silent success. Everything sent to the
+   board goes through `redact()`.
+
+`DACODE_KANBAN_BIN` / `DACODE_KANBAN_BOARD` override the `hermes` binary and the
+board. As with `dacode run`, the winner is a proposal: review the worktree diff
+before merging it.
+
 ### Reading the ledger
 
 ```bash
@@ -398,6 +434,7 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
       can silence or spoof the gate itself) and a verdict that requires
       `failed == 0`, not just exit code 0
 - [x] Fleet diversity — `--fleet a,b` puts one model per variant in a round; escalation prefers an untried family
+- [x] Kanban worker — `dacode kanban work <task_id>` claims a Hermes Kanban card, gates on its ```` ```gate ```` block, then completes or blocks it
 - [x] MCP memory server — `dacode mcp` (5 tools over stdio JSON-RPC, stdlib only)
 - [x] Bubblewrap isolation — `--isolate bwrap`: read-only host, empty home,
       workspace-only writes, network unshared, allow-listed env; the gate is
@@ -412,10 +449,3 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
       pinned to it, and `--isolate-network=allowlist:<file>`. Gate: a trial reaches
       a listed host, any other host fails, and an unparsable policy refuses to
       start — never a silent "allow all".
-- [ ] **DaCode as a Kanban worker.** Take a card, run it through the rig, report
-      back with evidence. Planned: `dacode kanban work <task_id>` reads the gate
-      command from the card body, runs one worktree per card under
-      `--isolate bwrap`, then `kanban_complete` (gate output, changed files, runlog
-      path) or `kanban_block` with the triage reason when the gate keeps failing.
-      Gate: a card completes end to end, a failing card blocks with a readable
-      reason, and no card is claimed twice.
