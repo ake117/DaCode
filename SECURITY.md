@@ -84,6 +84,15 @@ provider API keys in the environment, and anything reachable over the network.
    per trust domain, or read the lessons (`dacode memory search`) before pointing
    a new repository at a vault that hostile work has written to.
 
+   *Applied (Nov 2026):* the lesson vaults are separate from any personal
+   vault, and per-trust-domain by stack: `~/Documents/dacode_vault` (rig +
+   etf9) and `~/Documents/ap_dacode_vault` (AP_QT_Generator, a C/PHP-legacy
+   stack whose idioms must not leak into Python runs). Pass the vault
+   explicitly per run (`--vault ~/Documents/dacode_vault`); `DACODE_VAULT` is
+   deliberately **not** allow-listable through a repository's `.env` — a repo
+   that could redirect the vault could plant its own lessons — so the pointer
+   stays in the operator's hands.
+
 A sandbox hides `$HOME` by design, so a suite importing a **pip --user**
 package fails with `No module named X`. The gate turns that into a named
 `hidden_home_packages` finding (cause + the workspace-venv / system-runner
