@@ -1,8 +1,9 @@
 ---
 title: "Blueprint: The Ultimate Autonomous Engineering Rig (Pi + Harness² + pstack + Vault + Sandbox)"
 created: 2026-10-18
-updated: 2026-10-18
+updated: 2026-11-01
 update_history:
+  - "2026-11-01: ปลดสถานะเป็น historical — การ implement จริง (DaCode) เลือกกลไกต่างจาก note นี้หลายจุด (SQLite vectors แทน ChromaDB, deterministic gate และไม่มี LLM critic subagent, vault scoped ต่อโปรเจกต์); ดู docs/design/reviews/2026-11-01/"
   - "2026-10-18: สร้าง blueprint — สถาปัตยกรรม 5 ประสานสำหรับสร้าง AI Coding Agent ที่ฉลาด, ปลอดภัย, และเรียนรู้ได้เอง"
 tags:
   - ai/agent
@@ -10,7 +11,7 @@ tags:
   - blueprint
   - devtools
 type: architecture
-status: active
+status: historical
 aliases:
   - Ultimate Autonomous Engineering Rig
   - Trinity Plus Architecture
