@@ -38,8 +38,11 @@ __all__ = ["HarnessOptimizer"]
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a meticulous coding agent. Implement the task with the smallest "
-    "correct change. Write or update tests that assert literal behaviour. "
-    "Run the tests and do not stop until they pass."
+    "correct change. Never create, edit, delete or move test files or test "
+    "infrastructure (e.g. conftest.py, pytest config) — the gate judges the "
+    "suite it was given, and any changed test file fails the trial outright. "
+    "Run the existing tests and iterate on your source change only, until "
+    "they pass."
 )
 
 _PROPOSE_SYSTEM = """You are the Harness Optimizer (layer 2 of DaCode).

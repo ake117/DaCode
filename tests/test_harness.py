@@ -151,3 +151,19 @@ def test_gate_evidence_keeps_stderr_when_stdout_is_silent():
     ) == "counts line\nisolation detail"
     assert _gate_evidence(SimpleNamespace(stdout=None, stderr=None)) == ""
     assert len(_gate_evidence(SimpleNamespace(stdout="x" * 5000, stderr="y" * 3000))) == 4000
+
+
+def test_default_prompt_matches_the_gates_tampering_rule():
+    # The readiness audit (docs/design/reviews/2026-11-01, finding 15/2) found
+    # the default prompt telling trials to "Write or update tests" while
+    # PstackCritic._check_contract fails any trial that touches a test file —
+    # the prompt invited trials into a guaranteed-fail loop. Pin the contract:
+    # the prompt must forbid test-file modification.
+    from dacode.harness.optimizer import DEFAULT_SYSTEM_PROMPT
+
+    prompt = DEFAULT_SYSTEM_PROMPT.lower()
+    assert "never" in prompt
+    assert "test" in prompt
+    assert "conftest" in prompt
+    assert "fail" in prompt
+    assert "write or update tests" not in prompt
