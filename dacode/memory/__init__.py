@@ -94,14 +94,36 @@ class VaultMemory:
         self,
         vault_path: str | Path,
         *,
-        include_globs: tuple[str, ...] = ("**/*.md",),
+        scope: str | tuple[str, ...] | None = None,
+        include_globs: tuple[str, ...] | None = None,
         exclude_dirs: tuple[str, ...] = (".obsidian", ".git", ".trash", "templates"),
         max_note_chars: int = 200_000,
         semantic: bool | str = "auto",
         semantic_index: SemanticIndex | None = None,
     ) -> None:
+        """Keyword-retrieval memory over a markdown vault.
+
+        ``scope`` — one or more project names under ``Projects/``. A scoped
+        memory reads only ``Projects/<scope>/Lessons`` plus the vault-wide
+        ``shared/Lessons``, and semantic hits are filtered to the same
+        prefixes after path resolution (so a ``Projects/AP/../etf9/...``
+        rel_path cannot cross project lines by normalising inside the vault).
+        ``scope=None`` reads the whole vault, exactly as before.
+        """
         self.vault = Path(vault_path).expanduser().resolve()
+        self.scope: tuple[str, ...] = (
+            (scope,) if isinstance(scope, str) else tuple(scope or ())
+        )
+        if include_globs is None:
+            include_globs = ("**/*.md",) if not self.scope else tuple(
+                glob
+                for project in self.scope
+                for glob in (f"Projects/{project}/Lessons/**/*.md",)
+            ) + ("shared/Lessons/**/*.md",)
         self.include_globs = include_globs
+        self._scope_dirs: tuple[Path, ...] = tuple(
+            (self.vault / f"Projects/{project}").resolve() for project in self.scope
+        ) + ((self.vault / "shared").resolve(),) if self.scope else ()
         self.exclude_dirs = {d.lower() for d in exclude_dirs}
         self.max_note_chars = max_note_chars
         self.semantic_mode = semantic
@@ -111,13 +133,24 @@ class VaultMemory:
 
     # -- reading -----------------------------------------------------------
 
+    def _in_scope(self, path: Path) -> bool:
+        """Is ``path`` under one of this memory's scope prefixes?"""
+        if not self._scope_dirs:
+            return True
+        resolved = path.resolve()
+        return any(resolved.is_relative_to(d) for d in self._scope_dirs)
+
     def _iter_notes(self):
         seen: set[Path] = set()
         for pattern in self.include_globs:
             for path in self.vault.glob(pattern):
-                if not path.is_file() or path in seen:
+                # A symlink inside a scope's folder could point at another
+                # project's lessons — never follow one (path.is_file() would).
+                if path.is_symlink() or not path.is_file() or path in seen:
                     continue
                 if any(part.lower() in self.exclude_dirs for part in path.parts):
+                    continue
+                if not self._in_scope(path):
                     continue
                 seen.add(path)
                 yield path
@@ -224,7 +257,7 @@ class VaultMemory:
             )
         for sem in semantic_hits:
             target = _resolve_in_vault(self.vault, sem.rel_path)
-            if target is None:
+            if target is None or not self._in_scope(target):
                 continue
             key = target.resolve()
             base = merged.get(key)
@@ -319,7 +352,20 @@ class VaultMemory:
 
     # -- writing -----------------------------------------------------------
 
-    def ingest(self, lesson: Lesson, *, folder: str = "Projects/DaCode/Lessons") -> Path:
+    @property
+    def default_folder(self) -> str:
+        if len(self.scope) == 1:
+            return f"Projects/{self.scope[0]}/Lessons"
+        return "Projects/DaCode/Lessons"
+
+    def ingest(self, lesson: Lesson, *, folder: str | None = None) -> Path:
+        if folder is None:
+            folder = self.default_folder
+        if not self._in_scope(self.vault / folder):
+            raise ValueError(
+                f"ingest folder {folder!r} is outside this memory's scope "
+                f"{self.scope!r} — a scoped run writes only its own project"
+            )
         """Persist ``lesson`` as a markdown note. Returns the written path."""
         target_dir = self.vault / folder
         target_dir.mkdir(parents=True, exist_ok=True)

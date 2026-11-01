@@ -68,8 +68,12 @@ def test_rig_run_passes_and_ingests_a_lesson(rig_repo, vault):
 
 
 def test_rig_seeds_context_from_vault(rig_repo, vault):
-    # a note that mentions the task terms should be retrieved into the base harness
-    note = vault / "Resources" / "AI Agents" / "Calc Lesson.md"
+    # a note that mentions the task terms should be retrieved into the base
+    # harness — the rig scopes its vault view to its own project folder
+    # (Projects/<repo-name>) plus the vault-wide shared folder, so the seed
+    # lives where this repo's lessons actually go.
+    note = vault / "Projects" / "repo" / "Lessons" / "Calc Lesson.md"
+    note.parent.mkdir(parents=True)
     note.write_text(
         "---\ntitle: Calc Add Lesson\ntags:\n  - lesson\n---\n\n"
         "Implementing calc.add: always return a + b for integers.\n",

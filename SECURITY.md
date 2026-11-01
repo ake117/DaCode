@@ -84,14 +84,20 @@ provider API keys in the environment, and anything reachable over the network.
    per trust domain, or read the lessons (`dacode memory search`) before pointing
    a new repository at a vault that hostile work has written to.
 
-   *Applied (Nov 2026):* the lesson vaults are separate from any personal
-   vault, and per-trust-domain by stack: `~/Documents/dacode_vault` (rig +
-   etf9) and `~/Documents/ap_dacode_vault` (AP_QT_Generator, a C/PHP-legacy
-   stack whose idioms must not leak into Python runs). Pass the vault
-   explicitly per run (`--vault ~/Documents/dacode_vault`); `DACODE_VAULT` is
-   deliberately **not** allow-listable through a repository's `.env` — a repo
-   that could redirect the vault could plant its own lessons — so the pointer
-   stays in the operator's hands.
+   *Applied (Nov 2026):* the lesson vault is a dedicated machine vault
+   (`~/Documents/dacode_vault`), never a personal one, and retrieval is
+   **scoped per project**: a run on repo X reads only
+   `Projects/X/Lessons` plus the vault-wide `shared/Lessons` (rig-level
+   lessons), with the project line derived from the repository name.
+   Scoped retrieval enforces three guards proven necessary by simulation:
+   symlinks inside a scope's folder are never followed (they could import
+   another project's lessons), semantic hits are filtered to the scope
+   *after* path resolution (so `Projects/A/../B/...` cannot cross lines by
+   normalising), and a scoped run's `ingest` refuses to write outside its
+   own project. `DACODE_VAULT` is deliberately **not** allow-listable
+   through a repository's `.env` — a repo that could redirect the vault
+   could plant its own lessons — so the pointer stays in the operator's
+   hands (`--vault`).
 
 A sandbox hides `$HOME` by design, so a suite importing a **pip --user**
 package fails with `No module named X`. The gate turns that into a named

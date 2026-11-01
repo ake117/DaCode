@@ -157,3 +157,4 @@ def test_an_unknown_provider_key_is_ignored_out_loud(tmp_path, monkeypatch, caps
     assert "ACME_API_KEY" in err
     assert "provider key" in err
     assert "SOME_TOOL_FLAG" not in err  # ordinary unknown keys stay quiet
+
