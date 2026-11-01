@@ -359,6 +359,54 @@ mcp_servers:
 
 Then `hermes mcp test dacode-memory` should report 5 tools.
 
+### Kanban worker
+
+`dacode kanban work` takes one card from a [Hermes Kanban](https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban)
+board and reports back with evidence. The card body carries its own gate:
+
+````markdown
+Make `tests/test_slug.py` pass. Do NOT modify the test file.
+
+```gate
+python3 -m pytest -q tests/test_slug.py
+```
+````
+
+```bash
+dacode kanban work t_1485ddf4 --board myboard \
+  --executor pi --llm zai --model glm-5.3-flash --isolate-network
+```
+
+1. **claim** first (`hermes kanban claim`, atomic). A card someone else holds
+   exits `3` and nothing runs — no card is worked twice. The claim TTL covers
+   `budget × variants × 2 × variant-timeout + variant-timeout` (+10 min) unless
+   `--ttl` is given — each variant can spend a full timeout executing and
+   another inside the critic's gate, and the baseline spends one more. Any
+   other claim failure (typo'd id, unknown board) exits `5`, not a fake
+   "another worker owns the card".
+2. **gate** — the first closed ```` ```gate ```` block becomes the test command.
+   No gate → `block --kind needs_input`, exit `2`. An unclosed ```` ```gate ````
+   fence is not a gate, and a ````markdown example block does not leak its
+   inner ```gate lines as one.
+3. **run** — the rig runs under `--isolate bwrap` (always, for cards). A card whose
+   workspace is a git checkout (`--workspace dir:<repo>`) is worked there;
+   otherwise `--repo`. An explicit `--repo` wins: a card workspace that points
+   somewhere else is refused, and a workspace under `$HOME` is refused
+   outright (binding it read-write would re-expose the home directory the
+   sandbox emptied). The card checkout's own `.env` is loaded for
+   allow-listed keys the host shell did not already provide.
+4. **report** — pass → `complete` with `--metadata` (gate, gate output — gate
+   stderr included, so `unittest` suites and gate timeouts are visible —
+   tests passed/total, changed files, winning worktree, runlog path), exit `0`;
+   fail or a rig error → `block` with tests x/y and the reason, exit `1`. A
+   lost claim at the end is exit `4`, never a silent success; a board call
+   that failed outright is exit `5`. Everything sent to the board goes
+   through `redact()`.
+
+`DACODE_KANBAN_BIN` / `DACODE_KANBAN_BOARD` override the `hermes` binary and the
+board. As with `dacode run`, the winner is a proposal: review the worktree diff
+before merging it.
+
 ### Reading the ledger
 
 ```bash
@@ -398,6 +446,7 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
       can silence or spoof the gate itself) and a verdict that requires
       `failed == 0`, not just exit code 0
 - [x] Fleet diversity — `--fleet a,b` puts one model per variant in a round; escalation prefers an untried family
+- [x] Kanban worker — `dacode kanban work <task_id>` claims a Hermes Kanban card, gates on its ```` ```gate ```` block, then completes or blocks it
 - [x] MCP memory server — `dacode mcp` (5 tools over stdio JSON-RPC, stdlib only)
 - [x] Bubblewrap isolation — `--isolate bwrap`: read-only host, empty home,
       workspace-only writes, network unshared, allow-listed env; the gate is
@@ -412,10 +461,3 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
       pinned to it, and `--isolate-network=allowlist:<file>`. Gate: a trial reaches
       a listed host, any other host fails, and an unparsable policy refuses to
       start — never a silent "allow all".
-- [ ] **DaCode as a Kanban worker.** Take a card, run it through the rig, report
-      back with evidence. Planned: `dacode kanban work <task_id>` reads the gate
-      command from the card body, runs one worktree per card under
-      `--isolate bwrap`, then `kanban_complete` (gate output, changed files, runlog
-      path) or `kanban_block` with the triage reason when the gate keeps failing.
-      Gate: a card completes end to end, a failing card blocks with a readable
-      reason, and no card is claimed twice.
