@@ -102,8 +102,11 @@ candidate harnesses **per round**. Worktrees created = `variants × rounds`. Sta
 
 ### Where do the lessons go, and do they help?
 
-Each passing run writes a lesson note to the vault (`<vault>/Projects/DaCode/Lessons/`)
-and each later run retrieves the relevant ones as seed context. The effect compounds
+Each passing run writes a lesson note to the vault
+(`<vault>/Projects/<repo-name>/Lessons/`) and each later run on the same repo
+retrieves the relevant ones as seed context. Retrieval is scoped per project
+(plus `shared/Lessons`), so lessons never leak between projects; rig-level
+lessons that apply everywhere belong in `shared/Lessons/`. The effect compounds
 on repos you work repeatedly — that is the strongest reason to point DaCode at your
 own automation repos rather than one-off tasks.
 
