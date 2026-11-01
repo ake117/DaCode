@@ -103,14 +103,34 @@ class HarnessOptimizer:
 
     # -- propose -----------------------------------------------------------
 
-    def propose(self, task: str, base: HarnessVariant, n: int) -> list[HarnessVariant]:
-        """Ask the LLM for ``n`` candidate harness variants."""
+    def propose(
+        self,
+        task: str,
+        base: HarnessVariant,
+        n: int,
+        failures: str | None = None,
+    ) -> list[HarnessVariant]:
+        """Ask the LLM for ``n`` candidate harness variants.
+
+        ``failures`` is bounded evidence of why the previous round was
+        rejected (see ``_failure_digest``). Without it, multi-round retries
+        are blind: round 2 re-samples around the same prompt with no idea
+        why the gate failed round 1 (readiness audit, finding 18/2).
+        """
         user = (
             f"Task:\n{task}\n\n"
             f"Current best harness system_prompt:\n{base.system_prompt}\n\n"
             f"Seeded memory snippets:\n{base.seed_context() or '(none)'}\n\n"
-            f"Propose {n} variants."
         )
+        if failures:
+            user += (
+                "The previous round failed the gate. Evidence for the "
+                f"rejected variants:\n{failures}\n\n"
+                f"Propose {n} variants that change the approach so it "
+                "addresses these failures — not rewordings of the same idea."
+            )
+        else:
+            user += f"Propose {n} variants."
         raw = self.llm.complete(_PROPOSE_SYSTEM, user)
         specs = _parse_json_array(raw)
         variants: list[HarnessVariant] = []
@@ -251,6 +271,34 @@ class HarnessOptimizer:
             if variant.model:
                 continue
             variant.model = self.fleet[(offset + idx) % len(self.fleet)]
+
+    def _failure_digest(
+        self, variants: list[HarnessVariant], cap: int = 3000
+    ) -> str:
+        """Bounded evidence of why a round's variants were rejected.
+
+        Feeds ``propose(failures=...)`` so the next round knows what the
+        gate saw: per-variant test counts, error-level critic findings and
+        a tail of the gate's own output. Only failing variants are listed;
+        the whole digest is capped so a chatty gate cannot flood the
+        proposal prompt.
+        """
+        blocks: list[str] = []
+        for v in variants:
+            probe = v.probe
+            if probe is None or probe.critique_passed:
+                continue
+            lines = [
+                f"- variant {v.label!r} (id={v.id}, model={probe.model or 'default'}): "
+                f"tests {probe.tests_passed}/{probe.tests_total}, exit {probe.exit_code}"
+            ]
+            for check in probe.errors[:5]:
+                lines.append(f"  gate error: {check}")
+            tail = (probe.gate_output or probe.stderr or "").strip()
+            if tail:
+                lines.append("  evidence tail: " + tail[-800:].replace("\n", " | "))
+            blocks.append("\n".join(lines))
+        return "\n".join(blocks)[:cap]
 
     def next_fleet_model(self) -> str | None:
         """Pick a model whose family has not been tried yet.
@@ -413,6 +461,7 @@ class HarnessOptimizer:
         ladder = list(self.escalation_models)
 
         reprobe: list[HarnessVariant] | None = None
+        failure_evidence: str | None = None
         round_no = 0
         while round_no < self.budget:
             round_no += 1
@@ -421,7 +470,10 @@ class HarnessOptimizer:
                 variants = reprobe  # triage said: re-probe these unchanged
                 reprobe = None
             else:
-                variants = self.propose(task, best, self.variants_per_round)
+                variants = self.propose(
+                    task, best, self.variants_per_round, failures=failure_evidence
+                )
+            failure_evidence = None
             self._assign_fleet(variants, round_no)
             for variant in variants:
                 if variant.model:
@@ -443,6 +495,10 @@ class HarnessOptimizer:
                 break
             if round_no >= self.budget:
                 break  # no budget left to act on a triage decision
+            # the next proposal must know why this round was rejected —
+            # blind retries were the largest divergence from Harness²'s
+            # contrastive loop (readiness audit, finding 18)
+            failure_evidence = self._failure_digest(variants)
 
             action = "new_proposal"
             if self.judge is not None:

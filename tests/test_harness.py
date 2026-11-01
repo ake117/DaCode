@@ -167,3 +167,61 @@ def test_default_prompt_matches_the_gates_tampering_rule():
     assert "conftest" in prompt
     assert "fail" in prompt
     assert "write or update tests" not in prompt
+
+
+def test_failure_digest_is_bounded_and_structured():
+    from dacode.harness.models import ProbeResult
+
+    opt = HarnessOptimizer(
+        llm=StubLLM(), sandbox=GitSandbox(Path("/tmp/unused-digest-repo")),
+        executor=FakeExecutor(), critic=PstackCritic(),
+    )
+    probe = ProbeResult(
+        variant_id="v1", workspace="/tmp/x", exit_code=1,
+        tests_total=5, tests_passed=2,
+        gate_output="FAILED tests/test_calc.py::test_add",
+        errors=["tests_modified", "assertion_free"],
+    )
+    variant = HarnessVariant(label="bad", system_prompt="p", probe=probe)
+    digest = opt._failure_digest([variant])
+    assert "tests 2/5" in digest
+    assert "gate error: tests_modified" in digest
+    assert "FAILED tests/test_calc.py" in digest
+    assert "variant 'bad'" in digest
+    # passing variants and unprobed ones contribute nothing
+    ok = HarnessVariant(
+        label="ok", system_prompt="p",
+        probe=ProbeResult(variant_id="v2", workspace="/w", critique_passed=True),
+    )
+    assert opt._failure_digest([ok]) == ""
+    # capped
+    probe2 = ProbeResult(
+        variant_id="v3", workspace="/w", gate_output="x" * 9000, errors=[],
+    )
+    assert len(opt._failure_digest([HarnessVariant(label="x", system_prompt="p", probe=probe2)])) <= 3000
+
+
+def test_failed_round_feeds_evidence_into_next_proposal(rig_repo):
+    # Round 1: both variants fail (executor is a no-op, no calc.py). Round 2's
+    # proposal prompt must carry the gate evidence — blind retries were the
+    # readiness audit's finding 18 (docs/design/reviews/2026-11-01).
+    llm = StubLLM(default=PROPOSE_JSON)
+    executor = FakeExecutor(good_label="never-good")  # every variant fails
+    opt = HarnessOptimizer(
+        llm=llm,
+        sandbox=GitSandbox(rig_repo),
+        executor=executor,
+        critic=PstackCritic(),
+        budget=2,
+        variants_per_round=2,
+    )
+    opt.run("add a calc module", HarnessVariant(system_prompt=opt.base_prompt, label="base"))
+    first_users = [user for _, user in llm.calls if "Propose" in user]
+    assert len(first_users) >= 2
+    assert "The previous round failed" not in first_users[0]
+    assert any("The previous round failed" in u for u in first_users[1:])
+    evidence_call = next(u for u in first_users[1:] if "The previous round failed" in u)
+    # the no-op trial fails on counts (0/0), not error findings — the digest
+    # still carries the numbers and the gate's own output tail
+    assert "tests 0/" in evidence_call
+    assert "evidence tail:" in evidence_call
