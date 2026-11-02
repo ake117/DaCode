@@ -128,8 +128,9 @@ class DaCodeRig:
     def _isolation_policy(self) -> IsolationPolicy | None:
         """Turn `--isolate` into a policy, refusing to pretend when bwrap is missing.
 
-        The executor always sees the network when isolation is on (it has to reach a
-        model); the gate never does.
+        The executor sees the network only when --isolate-network (or
+        DACODE_ISOLATE_NETWORK) opts in — the default is net:off, which also
+        strips the provider keys. The gate never sees the network either way.
         """
         setting = (self.config.isolate or "none").strip().lower()
         if setting in {"none", "off", "false", "0", "no", ""}:

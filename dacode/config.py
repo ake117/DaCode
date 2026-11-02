@@ -39,7 +39,9 @@ class DaCodeConfig:
     baseline: tuple[int, int] | None = None  # (total, skipped) measured on the untouched repo
     fleet: list[str] = field(default_factory=list)  # models probed side by side
     isolate: str = "bwrap"  # fail closed: trials and the gate run in bubblewrap
-    isolate_network: bool = False  # trials may open sockets (an agent needs this)
+    # opt-in: the executor sees the network only with --isolate-network /
+    # DACODE_ISOLATE_NETWORK (it needs one to reach a model); default net:off
+    isolate_network: bool = False
 
     @classmethod
     def from_env(cls, repo: str | Path | None = None) -> "DaCodeConfig":
@@ -82,11 +84,14 @@ def _env_test_command() -> tuple[str, ...] | None:
 
 
 def _default_vault() -> str | None:
-    for candidate in (
-        Path.home() / "Documents" / "Vault",
-        Path.home() / "Vault",
-    ):
-        if candidate.is_dir():
-            return str(candidate)
-    return None
+    """The machine vault — never a personal one (SECURITY.md item 8).
+
+    Vault lessons are a cross-run influence channel, so the auto-detected
+    default must be the dedicated machine vault only. Personal vault paths
+    are deliberately not probed: pointing the rig at a personal vault would
+    let machine-written lessons land beside private notes. Operators point
+    elsewhere with DACODE_VAULT (real process env) or --vault.
+    """
+    candidate = Path.home() / "Documents" / "dacode_vault"
+    return str(candidate) if candidate.is_dir() else None
 
