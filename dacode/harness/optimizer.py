@@ -46,12 +46,12 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 _PROPOSE_SYSTEM = """You are the Harness Optimizer (layer 2 of DaCode).
-A "harness" is everything around the model: the system prompt, the tools
-enabled, and the memory snippets injected. Your job is to propose DIFFERENT
-harness variants for the task below, so the rig can contrast them.
+A "harness" is everything around the model: the system prompt and the
+memory snippets injected. Your job is to propose DIFFERENT harness variants
+for the task below, so the rig can contrast them.
 
 Return ONLY a JSON array. Each element:
-{"label": "<short>", "system_prompt": "<full prompt>", "tools": ["..."]}
+{"label": "<short>", "system_prompt": "<full prompt>"}
 Propose {n} genuinely different variants (vary the prompt strategy, not wording).
 No prose, no markdown fences — JSON only."""
 
@@ -143,7 +143,6 @@ class HarnessOptimizer:
                 HarnessVariant(
                     label=clean_label,
                     system_prompt=str(spec.get("system_prompt") or base.system_prompt),
-                    tools=[str(t) for t in spec.get("tools", [])] or list(base.tools),
                     memory_snippets=list(base.memory_snippets),
                     parent_id=base.id,
                     payload=dict(base.payload),
@@ -155,7 +154,6 @@ class HarnessOptimizer:
                 HarnessVariant(
                     label="fallback",
                     system_prompt=base.system_prompt,
-                    tools=list(base.tools),
                     memory_snippets=list(base.memory_snippets),
                     parent_id=base.id,
                     payload=dict(base.payload),

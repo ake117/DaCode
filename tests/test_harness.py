@@ -16,8 +16,8 @@ from dacode.sandbox import GitSandbox
 
 PROPOSE_JSON = json.dumps(
     [
-        {"label": "good", "system_prompt": "implement carefully", "tools": []},
-        {"label": "bad", "system_prompt": "do nothing", "tools": []},
+        {"label": "good", "system_prompt": "implement carefully"},
+        {"label": "bad", "system_prompt": "do nothing"},
     ]
 )
 
@@ -225,3 +225,12 @@ def test_failed_round_feeds_evidence_into_next_proposal(rig_repo):
     # still carries the numbers and the gate's own output tail
     assert "tests 0/" in evidence_call
     assert "evidence tail:" in evidence_call
+
+
+def test_propose_schema_does_not_request_dead_fields():
+    # Readiness audit finding 8 (docs/design/reviews/2026-11-01): the schema
+    # asked the LLM for "tools" that no executor ever read — the field was
+    # cut, and the proposal prompt must not ask for it again.
+    from dacode.harness.optimizer import _PROPOSE_SYSTEM
+
+    assert '"tools"' not in _PROPOSE_SYSTEM

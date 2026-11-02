@@ -206,8 +206,8 @@ from pathlib import Path as _Path
 
 PROPOSE_JSON = _json.dumps(
     [
-        {"label": "good", "system_prompt": "implement carefully", "tools": []},
-        {"label": "bad", "system_prompt": "do nothing", "tools": []},
+        {"label": "good", "system_prompt": "implement carefully"},
+        {"label": "bad", "system_prompt": "do nothing"},
     ]
 )
 

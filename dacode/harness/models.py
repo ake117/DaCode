@@ -15,7 +15,6 @@ class HarnessVariant:
     """One candidate configuration of the *harness* (not the model)."""
 
     system_prompt: str = ""
-    tools: list[str] = field(default_factory=list)
     memory_snippets: list[str] = field(default_factory=list)
     parent_id: str | None = None
     label: str = ""
