@@ -63,6 +63,10 @@ Elephant-Goldfish-Model ritual. Source reports: `1-zoom-out.md` …
 
 - **Done with this commit:** design README updated (reviews folder, softened
   verbatim claim); blueprint `status` retired to `historical`.
-- **Owner decision (P'Ek):** the five code gaps in (2) — each is real
-  engineering work, tracked separately.
+- **Resolved (Nov 2026, all five code gaps in (2), owner-approved):**
+  default prompt no longer invites test edits (`21d2f5d`) · failure evidence
+  feeds the next proposal round (`97a4f62`) · dead `variant.tools` cut
+  (`9134027`) · default-vault probe is machine-vault-only + network-flag docs
+  corrected (`0c975a9`) · ingest auto-indexes the vector store, fail-open
+  (`dbd4be0`). Suite: 370 → 379 tests.
 - **Optional doc pass:** items in (3).
