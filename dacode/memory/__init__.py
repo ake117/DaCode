@@ -25,6 +25,8 @@ from datetime import datetime
 from pathlib import Path
 
 from dacode.memory.backends import SemanticHit, SemanticBackend, resolve, status
+from dacode.memory.embedder import Embedder
+from dacode.memory.vectors import VectorStore
 from dacode.memory.backends.hermes import SemanticIndex
 
 __all__ = [
@@ -386,4 +388,26 @@ class VaultMemory:
             "---\n\n"
         )
         path.write_text(frontmatter + lesson.body.rstrip() + "\n", encoding="utf-8")
+        self._index_into_store()
         return path
+
+    def _index_into_store(
+        self, embedder: Embedder | None = None, store: VectorStore | None = None
+    ) -> None:
+        """Best-effort: make freshly ingested lessons visible to ``local`` search.
+
+        Until now a new lesson stayed invisible to semantic retrieval until
+        someone ran ``dacode memory index`` by hand (readiness audit,
+        docs/design/reviews/2026-11-01, finding 19). With no embedder
+        configured this is a no-op — the keyword pass still finds the note —
+        and any failure here (endpoint down, model mix in the store) must
+        never fail the run that just passed.
+        """
+        try:
+            embedder = embedder or Embedder()
+            if not embedder.configured:
+                return
+            store = store or VectorStore()
+            store.index(self.vault, embedder)
+        except Exception:
+            return
