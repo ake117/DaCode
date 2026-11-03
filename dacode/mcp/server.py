@@ -20,6 +20,12 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, TextIO
 
+# On Windows a piped stdout defaults to cp1252; ensure_ascii=False payloads with
+# non-ASCII (vault em-dashes) then leave the process as invalid UTF-8 bytes and
+# UTF-8-decoding MCP clients crash on the stream.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from dacode import retro, state
 
 __all__ = ["PROTOCOL_VERSION", "MemoryServer", "TOOLS"]

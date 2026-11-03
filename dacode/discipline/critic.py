@@ -201,12 +201,15 @@ class PstackCritic:
         if _pytest_like(cmd):
             junit_dir = Path(tempfile.mkdtemp(prefix="dacode-junit-"))
             junit = junit_dir / "report.xml"
-            if len(cmd) >= 3 and cmd[0] == "bash" and cmd[1] == "-c":
+            bash_name = Path(cmd[0]).name.lower() if cmd else ""
+            if len(cmd) >= 3 and bash_name in {"bash", "bash.exe"} and cmd[1] == "-c":
                 # `bash -c '<script>' --junitxml=…` hands the flag to bash as a
                 # positional, not to pytest — the report never gets written and
                 # every green run reads as counts_unavailable. Put the flag
                 # inside the script where the test runner can see it.
-                cmd[2] = f"{cmd[2]} --junitxml={junit}"
+                # bash strips backslashes, so a Windows temp path would be
+                # mangled — forward slashes survive both bash and pytest.
+                cmd[2] = f"{cmd[2]} --junitxml={junit.as_posix()}"
             else:
                 cmd = [*cmd, f"--junitxml={junit}"]
             if policy is not None and policy.enabled:

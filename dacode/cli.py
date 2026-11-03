@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -221,7 +222,9 @@ def _make_config(args) -> DaCodeConfig:
     if getattr(args, "test_command", None):
         # Run the user's test command through a shell so pipes/`&&` work, and
         # so a non-Python suite (e.g. `make -C port/renderer test`) is one argv.
-        cfg.test_command = ("bash", "-c", args.test_command)
+        # Resolve bash to a full path: CreateProcess finds System32\bash.exe
+        # (the WSL launcher) before PATH, which cannot run Windows interpreters.
+        cfg.test_command = (shutil.which("bash") or "bash", "-c", args.test_command)
     if getattr(args, "test_glob", None):
         cfg.test_glob = args.test_glob
     if getattr(args, "variant_timeout", None) is not None:
