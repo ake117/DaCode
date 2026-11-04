@@ -54,7 +54,12 @@ diff for a wrong assumption without reading the whole file.
 
 These three rules are the un-gated half of Andrej Karpathy's observations on LLM
 coding pitfalls; the other half — turn the request into a check that can fail —
-is already enforced above, by the gate.
+is already enforced above, by the gate. The rig applies the same rules to its
+own trials: the default executor system prompt carries all of them
+(`DEFAULT_SYSTEM_PROMPT` in `dacode/harness/optimizer.py`), and the critic
+flags a trial whose diff is broader than `broad_diff_limit` non-test files
+with a `broad_diff` *warning* — heuristic, so it dents the variant's score
+and shows in every report without ever failing a passing run on its own.
 
 ## Running the rig here
 
