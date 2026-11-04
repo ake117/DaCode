@@ -72,6 +72,7 @@ class PstackCritic:
         min_score: float = 0.6,
         isolation: IsolationPolicy | None = None,
         gate_infra: tuple[str, ...] | None = None,
+        broad_diff_limit: int = 10,
     ) -> None:
         # The gate must own its output contract: a repo pyproject that sets
         # `addopts = "-q"` compounds with our own `-q` into `-qq` (verbosity −2),
@@ -88,6 +89,11 @@ class PstackCritic:
         # touches them can pass without doing the work (verified: a conftest that
         # prints a fake summary and calls os._exit(0)).
         self.gate_infra = tuple(gate_infra or DEFAULT_GATE_INFRA)
+        # Karpathy's surgical-change rule as a soft gate: more non-test files
+        # changed than this earns a `broad_diff` warning (score dented, report
+        # flagged) — never a failure on its own, since the gate cannot read
+        # intent and some tasks legitimately span files.
+        self.broad_diff_limit = max(1, broad_diff_limit)
 
     def _scan_tests(self, workspace: Path) -> tuple[list[Finding], int]:
         findings: list[Finding] = []
@@ -520,6 +526,63 @@ class PstackCritic:
                 )
         return findings
 
+    def _check_broad_diff(self, workspace: Path) -> list[Finding]:
+        """Karpathy's surgical-change rule as a soft gate (warning only).
+
+        ``git status`` already runs for test integrity; this counts the
+        non-test, non-infra files the trial touched and warns when the diff
+        is broader than ``broad_diff_limit``. A warning dents the variant's
+        score by 0.05 and surfaces in every report and in compose ranking —
+        without ever failing a passing run, because a warning here is
+        heuristic, not evidence of tampering.
+        """
+        try:
+            proc = subprocess.run(
+                [
+                    "git",
+                    "-c", "core.hooksPath=/dev/null",
+                    "-c", "core.fsmonitor=false",
+                    "-c", "core.attributesFile=/dev/null",
+                    "status", "--porcelain", "--untracked-files=all",
+                ],
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if proc.returncode != 0:
+            return []  # not a git checkout (or unreadable): nothing to judge
+        test_dirs = self._test_dirs(workspace)
+        touched: set[str] = set()
+        for line in proc.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:].strip().strip('"')
+            if any(part in {"__pycache__", ".pytest_cache"} for part in Path(path).parts):
+                continue
+            name = Path(path).name
+            if fnmatch.fnmatch(name, self.test_glob) or str(Path(path).parent) in test_dirs:
+                continue
+            if name in self.gate_infra:
+                continue
+            touched.add(path)
+        if len(touched) <= self.broad_diff_limit:
+            return []
+        sample = ", ".join(sorted(touched)[:5])
+        return [
+            Finding(
+                check="broad_diff",
+                severity="warning",
+                message=(
+                    f"trial changed {len(touched)} non-test files — every changed line "
+                    f"should trace to the task (sample: {sample})"
+                ),
+                location=str(workspace),
+            )
+        ]
+
     def review_workspace(
         self,
         workspace: str | Path,
@@ -533,6 +596,7 @@ class PstackCritic:
             findings.extend(self._check_contract(workspace, contract))
         else:
             findings.extend(self._check_test_integrity(workspace))
+        findings.extend(self._check_broad_diff(workspace))
         exit_code, stdout, stderr, total, failed, skipped, counts_note, counts_source = (
             self._run_tests(workspace)
         )

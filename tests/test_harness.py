@@ -167,6 +167,11 @@ def test_default_prompt_matches_the_gates_tampering_rule():
     assert "conftest" in prompt
     assert "fail" in prompt
     assert "write or update tests" not in prompt
+    # Karpathy guidelines (state assumptions, simplicity, surgical changes)
+    # now ride along in the executor-facing prompt too.
+    assert "assume" in prompt
+    assert "speculative" in prompt
+    assert "only what the task requires" in prompt
 
 
 def test_failure_digest_is_bounded_and_structured():
