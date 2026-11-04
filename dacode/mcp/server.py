@@ -26,13 +26,13 @@ from typing import Any, Iterable, TextIO
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from dacode import retro, state
+from dacode import __version__, retro, state
 
 __all__ = ["PROTOCOL_VERSION", "MemoryServer", "TOOLS"]
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "dacode-memory"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = __version__
 
 
 def _schema(properties: dict[str, Any], required: Iterable[str] = ()) -> dict[str, Any]:
