@@ -26,6 +26,36 @@ not about the code in general.
 - The suite must stay hermetic: `conftest.py` sets `DACODE_RUNLOG=off` and a
   temporary `DACODE_MEMORY_DB`; no test may reach an embedder or the network.
 
+## Changing code by hand: assume nothing, change little
+
+The gate sees only whether tests pass. A drive-by refactor of 40 unrelated lines
+rides through it on a green run, so the three rules below are not gated — they
+are yours to keep.
+
+**State the assumption before you edit.** A task names a behaviour, not a file.
+Say which files you will touch and why, and name any interpretation you had to
+pick. Stop when the ambiguity is about behaviour rather than syntax: the gate can
+verify a correct implementation of the wrong requirement without complaint.
+
+**Write the smallest diff that satisfies the task.** No abstraction for a single
+call site. No config value for something that never varies. No error handling for
+a state the gate or the type hints already exclude. If a change runs to 200 lines
+and 50 would do, rewrite it before running the gate.
+
+**Touch only what the task requires.** Do not reformat, rename, re-quote or add
+type hints and docstrings to lines your change does not need; match the
+surrounding style even where you would write it differently. Remove the imports
+and helpers *your* change orphaned. Pre-existing dead code gets mentioned in the
+commit message, not deleted.
+
+The test for all three: **every changed line traces to the task, and every
+assumption you made is written down.** A reviewer should be able to reject the
+diff for a wrong assumption without reading the whole file.
+
+These three rules are the un-gated half of Andrej Karpathy's observations on LLM
+coding pitfalls; the other half — turn the request into a check that can fail —
+is already enforced above, by the gate.
+
 ## Running the rig here
 
 ```bash
