@@ -28,7 +28,7 @@ so the next run starts smarter. No ground-truth labels required.
 |---|-------|--------|-----|
 | 1 | **Vault Memory** | `dacode/memory/` | retrieve prior lessons → seed the harness; ingest the winner back as a note |
 | 2 | **Harness² Optimizer** | `dacode/harness/` | Propose → Probe → Compose recursion over *harness* variants |
-| 3 | **Executor** | `dacode/executor/` | Pi coding agent (or a script / test double) does the change |
+| 3 | **Executor** | `dacode/executor/` | Pi coding agent, the Antigravity CLI (`agy`), or a script / test double does the change |
 | 4 | **pstack Discipline** | `dacode/discipline/` | AST checks for weak tests + a real `pytest` run as the gate |
 | 5 | **Git Sandbox** | `dacode/sandbox/` | one isolated `git worktree` per trial, checkpoint + rollback |
 | + | **Jev Judge** *(optional)* | `dacode/judgment.py` | a TypeSafe **System One** decision model picks the Compose winner — `--judge jev` |
@@ -123,7 +123,7 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 |------|--------|---------|
 | `--llm` | `stub` \| `local` \| any provider preset (table below) | `openrouter` |
 | `--model` | any model id | `deepseek/deepseek-v4.1-flash` |
-| `--executor` | `pi` \| `script` | `pi` |
+| `--executor` | `pi` \| `script` \| `agy` | `pi` |
 | `--executor-provider` | any provider preset — which key the Pi executor authenticates with | `openrouter` |
 | `--judge` | `jev` (unset = off) | off |
 | `--escalate-models` | comma-separated model ladder, e.g. `claude-sonnet-4-5,gpt-4o` | none |

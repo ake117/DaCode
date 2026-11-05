@@ -49,7 +49,8 @@ def _add_run_options(p: argparse.ArgumentParser) -> None:
         help="stub | local | " + " | ".join(provider_names()),
     )
     p.add_argument("--model", default=None, help="model id for the chosen backend")
-    p.add_argument("--executor", default=None, choices=["pi", "script"])
+    p.add_argument("--executor", default=None, choices=["pi", "script", "agy"],
+                    help="agy = Antigravity CLI as the executor (per-variant prompts supported)")
     p.add_argument(
         "--executor-provider",
         default=None,

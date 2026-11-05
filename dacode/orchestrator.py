@@ -16,6 +16,7 @@ from pathlib import Path
 
 from dacode.config import DaCodeConfig
 from dacode.discipline.critic import PstackCritic
+from dacode.executor.agy import AgyExecutor
 from dacode.executor.pi import PiExecutor
 from dacode.executor.script import ScriptExecutor
 from dacode.harness.models import HarnessResult, HarnessVariant
@@ -93,6 +94,12 @@ class DaCodeRig:
         if self.config.executor == "script":
             return ScriptExecutor(
                 default_command=self.config.script_command,
+                timeout=self.config.variant_timeout,
+                isolation=self.isolation,
+            )
+        if self.config.executor == "agy":
+            return AgyExecutor(
+                model=self.config.model,
                 timeout=self.config.variant_timeout,
                 isolation=self.isolation,
             )

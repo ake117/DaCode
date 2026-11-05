@@ -20,7 +20,7 @@ class DaCodeConfig:
     model: str = "deepseek/deepseek-v4.1-flash"
     base_url: str | None = None
 
-    executor: str = "pi"  # "pi" | "script"
+    executor: str = "pi"  # "pi" | "script" | "agy"
     executor_provider: str = "openrouter"  # provider id the pi executor authenticates with
     script_command: str | None = None
 
