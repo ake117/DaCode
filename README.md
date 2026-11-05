@@ -44,7 +44,7 @@ so the next run starts smarter. No ground-truth labels required.
                                 ▼
         ┌───────────────────────────────────────────────┐
         │ 5. Git Sandbox  worktree per trial (isolated)  │
-        │ 3. Executor     Pi / script applies the change │
+        │ 3. Executor     Pi / agy / script applies it   │
         └───────────────────────┬───────────────────────┘
                                 ▼
         ┌───────────────────────────────────────────────┐

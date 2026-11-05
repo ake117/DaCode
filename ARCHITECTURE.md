@@ -9,7 +9,7 @@ code in this repository.
 |---|---|
 | 1. Semantic Vault Memory | `dacode/memory/__init__.py` — `VaultMemory`, `MemoryHit`, `Lesson` |
 | 2. Google Harness² (Propose-Probe-Compose) | `dacode/harness/optimizer.py` — `HarnessOptimizer`; `dacode/harness/models.py` |
-| 3. Pi Coding Agent (executor) | `dacode/executor/pi.py` — `PiExecutor`; `dacode/executor/script.py`; `dacode/executor/base.py` |
+| 3. Executor (Pi / agy / script) | `dacode/executor/pi.py` — `PiExecutor`; `dacode/executor/agy.py` — `AgyExecutor`; `dacode/executor/script.py`; `dacode/executor/base.py` |
 | 4. pstack Principles + Adversarial Critic | `dacode/discipline/critic.py`, `dacode/discipline/checks.py` |
 | 5. Isolated Sandbox + Git Checkpoints | `dacode/sandbox/__init__.py` — `GitSandbox` |
 | Workflow lifecycle wiring | `dacode/orchestrator.py` — `DaCodeRig` |
@@ -118,7 +118,7 @@ commits within the trial; `rollback` hard-resets it. Losing trials are removed
 ```
 cli → orchestrator → {memory, harness → {sandbox, executor, discipline, llm}}
                           sandbox → git (subprocess)
-                          executor → pi (subprocess) | shell
+                          executor → pi | agy (subprocess) | shell
                           discipline → ast, pytest (subprocess)
                           llm → urllib (no third-party deps)
 ```
