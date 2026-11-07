@@ -96,3 +96,26 @@ def test_cli_llm_help_stays_in_sync_with_the_registry():
     run_help = sub.choices["run"].format_help()
     for name in provider_names():
         assert name in run_help, f"--llm help is missing provider {name!r}"
+
+
+def test_zai_default_is_the_standard_api_not_the_coding_plan():
+    # The Coding-Plan endpoint is licensed for specific z.ai packages only;
+    # it must never ship as a repo default (regression pin).
+    from dacode.llm.providers import PROVIDERS
+
+    assert PROVIDERS["zai"]["base_url"] == "https://api.z.ai/api/paas/v4"
+
+
+def test_zai_base_url_env_override(monkeypatch):
+    # PROVIDERS is built at import time — reload the module under the env.
+    import importlib
+
+    import dacode.llm.providers as providers_module
+
+    monkeypatch.setenv("ZAI_BASE_URL", "https://example.invalid/v9")
+    providers_module = importlib.reload(providers_module)
+    assert providers_module.PROVIDERS["zai"]["base_url"] == "https://example.invalid/v9"
+    # restore the module so later tests don't inherit the override
+    monkeypatch.delenv("ZAI_BASE_URL")
+    importlib.reload(providers_module)
+    assert providers_module.PROVIDERS["zai"]["base_url"] == "https://api.z.ai/api/paas/v4"

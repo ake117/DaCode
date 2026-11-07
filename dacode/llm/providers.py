@@ -14,6 +14,8 @@ dotenv (``~/.hermes/.env``) — a standing instruction from 2026-10-20.
 
 from __future__ import annotations
 
+import os
+
 __all__ = ["PROVIDERS", "provider_names", "get_provider"]
 
 PROVIDERS: dict[str, dict] = {
@@ -28,7 +30,10 @@ PROVIDERS: dict[str, dict] = {
         "default_model": "gpt-4o-mini",
     },
     "zai": {
-        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        # Standard pay-per-token API. The Coding-Plan endpoint
+        # (/api/coding/paas/v4) is licensed for specific z.ai packages only —
+        # it must not ship as a repo default; point at it via ZAI_BASE_URL.
+        "base_url": os.environ.get("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
         "env": "GLM_API_KEY",
         "default_model": "glm-5.3-flash",
     },

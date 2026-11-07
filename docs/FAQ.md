@@ -64,8 +64,11 @@ preflight balance check. Cap it in `~/.pi/agent/models.json` — the override mu
 }
 ```
 
-`z.ai` works too, via the coding endpoint with `GLM_API_KEY`:
-`--llm zai --executor-provider zai --model glm-5.3-flash`. Put the key in the
+`z.ai` works too, with `GLM_API_KEY`: `--llm zai --executor-provider zai
+--model glm-5.3-flash`. The default base URL is z.ai's standard pay-per-token
+API; if your key belongs to the GLM Coding Plan, point `ZAI_BASE_URL` at the
+plan's endpoint in the same `.env` (that endpoint is licensed for specific
+z.ai packages only, so DaCode never ships it as a default). Put the keys in the
 **target repository's** `.env` — that is the file the CLI loads (plus your real
 environment), never `~/.hermes/.env` or Pi's auth store.
 
