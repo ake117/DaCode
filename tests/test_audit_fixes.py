@@ -716,7 +716,11 @@ def test_agy_and_pi_sandbox_policies_protect_code_hooks_and_preserve_protected_p
     1. preserve any existing `protected_paths` on the base IsolationPolicy,
     2. re-bind hooks, skills, plugins, settings, and code directories (`node_modules`,
        `dist`, `lib`, `extensions`, `builtin`) read-only via `protected_paths`, and
-    3. mask MCP / agent credential files (`mcp_config.json`, `auth.json`) via `hidden_files`.
+    3. neutralise MCP / agent credential files (`mcp_config.json`, `auth.json`).
+       agy authenticates from files under ~/.config/antigravity (verified end
+       to end — masking ~/.gemini auth killed every sandboxed trial), so the
+       default binds those read-only via `protected_paths` instead of hiding
+       them; DACODE_AGY_AUTH=mask switches to `hidden_files`.
     """
     from dacode.executor.agy import AgyExecutor
     from dacode.executor.pi import PiExecutor
@@ -758,7 +762,6 @@ def test_agy_and_pi_sandbox_policies_protect_code_hooks_and_preserve_protected_p
     assert gemini_skills in agy_policy.protected_paths
     assert gemini_settings in agy_policy.protected_paths
     assert gemini_mcp in agy_policy.protected_paths
-    assert gemini_mcp in agy_policy.hidden_files
 
     pi_policy = PiExecutor(isolation=base_policy)._sandbox_policy(str(fake_bin))
     assert existing_protected in pi_policy.protected_paths
