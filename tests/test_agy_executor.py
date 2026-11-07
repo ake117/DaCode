@@ -8,6 +8,7 @@ prompt that starts with "-" can be read as a flag.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from dacode.executor.agy import AgyExecutor
@@ -100,8 +101,6 @@ def test_sandbox_policy_carries_home_runtime_dir_dbus_and_auth(monkeypatch, tmp_
     fake_agy.parent.mkdir()
     fake_agy.write_text("#!/bin/sh\n")
     monkeypatch.setattr("dacode.executor.agy.shutil.which", lambda cmd: str(fake_agy))
-    import os
-
     bus = Path("/run/user") / str(os.getuid()) / "bus"
     monkeypatch.setattr(bus.parent.__class__, "exists", lambda self: True, raising=False)
     monkeypatch.setattr(Path, "exists", lambda self: True)
