@@ -226,8 +226,16 @@ class MemoryServer:
     def serve(self, stdin: TextIO | None = None, stdout: TextIO | None = None) -> None:
         reader: TextIO = stdin if stdin is not None else sys.stdin
         writer: TextIO = stdout if stdout is not None else sys.stdout
-        for line in reader:
-            line = line.strip()
+        while True:
+            raw = reader.readline(MAX_REQUEST_CHARS + 1)
+            if not raw:
+                break
+            if len(raw) > MAX_REQUEST_CHARS:
+                while raw and not raw.endswith("\n"):
+                    raw = reader.readline(65536)
+                _write(writer, _error(None, -32600, "invalid request: line exceeds maximum size"))
+                continue
+            line = raw.strip()
             if not line:
                 continue
             try:
@@ -238,6 +246,9 @@ class MemoryServer:
             response = self.handle(request)
             if response is not None:
                 _write(writer, response)
+
+
+MAX_REQUEST_CHARS = 1_048_576  # 1 MiB per JSON-RPC line
 
 
 def _content(payload: Any, *, is_error: bool = False) -> dict[str, Any]:

@@ -23,11 +23,33 @@ the memory layer decides to fall back to keyword retrieval.
 from __future__ import annotations
 
 import json
+import math
 import os
 import urllib.error
 import urllib.request
 
 __all__ = ["Embedder", "EmbedError"]
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+    except ValueError:
+        return default
+    return val if math.isfinite(val) and val > 0 else default
+
+
+def _env_int(name: str, default: int | None = None) -> int | None:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 class EmbedError(RuntimeError):
@@ -56,10 +78,18 @@ class Embedder:
             or os.environ.get("GOOGLE_API_KEY")
             or ""
         )
-        self.timeout = float(timeout or os.environ.get("DACODE_EMBED_TIMEOUT", "60"))
-        self.batch = max(1, int(batch or os.environ.get("DACODE_EMBED_BATCH", "16")))
-        raw_dims = dims if dims is not None else os.environ.get("DACODE_EMBED_DIMS")
-        self.dims = int(raw_dims) if raw_dims else None
+        self.timeout = (
+            float(timeout)
+            if timeout is not None
+            else _env_float("DACODE_EMBED_TIMEOUT", 60.0)
+        )
+        raw_batch = batch if batch is not None else _env_int("DACODE_EMBED_BATCH", 16)
+        self.batch = max(1, int(raw_batch if raw_batch is not None else 16))
+        if dims is not None:
+            self.dims = int(dims) if dims > 0 else None
+        else:
+            parsed_dims = _env_int("DACODE_EMBED_DIMS")
+            self.dims = parsed_dims if (parsed_dims is not None and parsed_dims > 0) else None
         self._transport = transport or self._post
 
     @property

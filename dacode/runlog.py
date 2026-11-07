@@ -50,15 +50,23 @@ def record(event: dict) -> None:
         path = _path()
         if path is None:
             return
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        try:
-            path.parent.chmod(0o700)
-        except OSError:
-            pass
+        parent = path.parent
+        created = not parent.exists()
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if created or parent == default_path().parent:
+            try:
+                parent.chmod(0o700)
+            except OSError:
+                pass
         event = redact_event({"ts": time.time(), **event})
         with _WRITE_LOCK:
-            with path.open("a", encoding="utf-8") as fh:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
             state.ingest(event)  # mirror into memory.db (queryable history)
     except OSError as exc:
         print(f"[runlog] record failed: {exc}", file=sys.stderr)

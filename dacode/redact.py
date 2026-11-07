@@ -18,6 +18,13 @@ REDACTED = "[REDACTED]"
 
 #: Ordered; each is applied to every string that crosses a boundary.
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "pem_key",
+        re.compile(
+            r"-----BEGIN [A-Z0-9 _\-]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 _\-]*PRIVATE KEY-----"
+        ),
+    ),
+    ("stripe", re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}")),
     ("openai", re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}")),
     ("groq", re.compile(r"\bgsk_[A-Za-z0-9]{16,}")),
     ("google", re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}")),
@@ -26,8 +33,10 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("openrouter", re.compile(r"\bsk-or-v1-[A-Za-z0-9]{16,}")),
     ("github", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})")),
     ("gitlab", re.compile(r"\bglpat-[A-Za-z0-9_\-]{16,}")),
+    ("pypi", re.compile(r"\bpypi-[A-Za-z0-9_\-]{16,}")),
+    ("npm", re.compile(r"\bnpm_[A-Za-z0-9]{20,}")),
     ("slack", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{16,}")),
-    ("aws", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("aws", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("url_userinfo", re.compile(r"(https?://[^/\s:@]+):[^/\s@]{8,}@")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}")),
     ("bearer", re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{12,}")),
@@ -41,10 +50,11 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 #: prefix for the patterns below to catch (GLM/ZAI omission found in the
 #: follow-up audit, Oct 2026).
 _SECRET_ENV = (
-    "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
-    "GOOGLE_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY",
-    "XAI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "JEV_API_KEY",
-    "DACODE_EMBED_API_KEY",
+    "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+    "GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY",
+    "MISTRAL_API_KEY", "XAI_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "JEV_API_KEY",
+    "DACODE_EMBED_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NPM_TOKEN", "PYPI_API_TOKEN",
 )
 
 _MIN_SECRET_LEN = 8
@@ -96,3 +106,22 @@ def redact_event(event: dict) -> dict:
         return value
 
     return {key: _walk(value) for key, value in event.items()}
+
+
+#: Full ECMA-48 escape/control sequences (OSC/DCS/SOS/PM/APC, CSI with any final
+#: byte in 0x40..0x7E, 2-byte ESC sequences, C0 controls, and 8-bit C1 controls).
+_TERMINAL_ESCAPE_RE = re.compile(
+    r"(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f]).*?(?:\x07|\x1b\\|\x9c|$)"
+    r"|(?:\x1b\[|\x9b)[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]"
+    r"|\x1b[\x20-\x2f]*[\x30-\x7e]"
+    r"|[\x00-\x1f\x7f-\x9f]",
+    re.DOTALL,
+)
+
+
+def sanitize_terminal(text: object) -> str:
+    """Strip terminal escape and control sequences from single-line UI text."""
+    if text is None:
+        return ""
+    raw = str(text).replace("\r\n", " ").replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    return _TERMINAL_ESCAPE_RE.sub("", raw)

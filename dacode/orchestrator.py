@@ -121,7 +121,14 @@ class DaCodeRig:
         if self.isolation is None:
             return None
         repo = Path(self.config.repo).resolve()
-        hidden = [repo / ".env"]
+        home = Path.home()
+        hidden = [
+            repo / ".env",
+            home / ".pi" / "agent" / "auth.json",
+            home / ".gemini" / "antigravity" / "mcp_config.json",
+            home / ".gemini" / "oauth_creds.json",
+            home / ".gemini" / "google_accounts.json",
+        ]
         protected = [repo / ".git"] if (repo / ".git").exists() else []
         return IsolationPolicy(
             enabled=True,
@@ -157,6 +164,12 @@ class DaCodeRig:
         hidden: list[Path] = [Path(self.config.repo).resolve() / ".env"]
         if (os.environ.get("DACODE_PI_AUTH") or "mask").lower() != "bind":
             hidden.append(Path.home() / ".pi" / "agent" / "auth.json")
+        if (os.environ.get("DACODE_AGY_AUTH") or "mask").lower() != "bind":
+            hidden.extend((
+                Path.home() / ".gemini" / "antigravity" / "mcp_config.json",
+                Path.home() / ".gemini" / "oauth_creds.json",
+                Path.home() / ".gemini" / "google_accounts.json",
+            ))
         return IsolationPolicy(
             enabled=True,
             network=bool(self.config.isolate_network),

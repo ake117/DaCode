@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from dacode.executor.base import ExecResult
 from dacode.harness.optimizer import DEFAULT_SYSTEM_PROMPT
-from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, wrap_command
+from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, allowed_env, wrap_command
 
 if TYPE_CHECKING:
     from dacode.harness.models import HarnessVariant
@@ -99,15 +99,37 @@ class AgyExecutor:
         node_dir = Path(node).resolve().parent if node else None
         if node_dir:
             policy = policy.with_paths(node_dir, node_dir)
+        gemini_dir = Path.home() / ".gemini"
+        protected: list[Path] = list(policy.protected_paths)
+        for candidate in (
+            Path(binary_path).resolve().parent if binary_path else None,
+            node_dir,
+            *(
+                base / sub
+                for base in (gemini_dir, gemini_dir / "antigravity")
+                for sub in (
+                    "hooks", "skills", "plugins", "rules", "agents", "builtin",
+                    "extensions", "node_modules", "dist", "lib", "bin",
+                    "settings.json", "mcp_config.json",
+                )
+            ),
+        ):
+            if candidate and candidate not in protected:
+                protected.append(candidate)
+        hidden: list[Path] = list(policy.hidden_files)
+        if (os.environ.get("DACODE_AGY_AUTH") or "mask").lower() != "bind":
+            for secret in (
+                gemini_dir / "antigravity" / "mcp_config.json",
+                gemini_dir / "oauth_creds.json",
+                gemini_dir / "google_accounts.json",
+            ):
+                if secret not in hidden:
+                    hidden.append(secret)
         return dataclasses.replace(
             policy,
-            writable_paths=policy.writable_paths + (Path.home() / ".gemini",),
-            protected_paths=tuple({
-                p for p in (
-                    Path(binary_path).resolve().parent if binary_path else None,
-                    node_dir,
-                ) if p
-            }),
+            writable_paths=policy.writable_paths + (gemini_dir,),
+            protected_paths=tuple(protected),
+            hidden_files=tuple(hidden),
         )
 
     def run(self, variant: "HarnessVariant", workspace: str | Path) -> ExecResult:
@@ -128,6 +150,15 @@ class AgyExecutor:
                 cmd = wrap_command(cmd, workspace=workspace, policy=policy)
             except IsolationUnavailable as exc:
                 return ExecResult(exit_code=126, stderr=f"isolation unavailable: {exc}", command="")
+            child_env = allowed_env(policy)
+        else:
+            child_env = allowed_env(
+                IsolationPolicy(
+                    enabled=False,
+                    network=True if self.isolation is None else self.isolation.network,
+                    env_allow=("HOME", *(self.isolation.env_allow if self.isolation else ())),
+                )
+            )
         try:
             proc = subprocess.run(
                 cmd,
@@ -135,6 +166,7 @@ class AgyExecutor:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                env=child_env,
             )
         except subprocess.TimeoutExpired as exc:
             return ExecResult(

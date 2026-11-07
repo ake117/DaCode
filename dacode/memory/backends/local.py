@@ -14,16 +14,19 @@ from pathlib import Path
 
 
 def _contained(vault: Path, relative: str) -> Path | None:
-    """`vault / relative` only if it really stays inside the vault."""
+    """`vault / relative` only if it really stays inside the vault without symlinks."""
+    import os
+
+    from dacode.memory.vectors import _is_safe_vault_file
+
     candidate = Path(relative)
     if candidate.is_absolute():
         return None
-    resolved = (vault / candidate).resolve()
-    try:
-        resolved.relative_to(vault.resolve())
-    except ValueError:
+    vault_real = vault.resolve()
+    norm = Path(os.path.normpath(str(vault_real / candidate)))
+    if not _is_safe_vault_file(vault_real, norm):
         return None
-    return resolved
+    return norm.resolve()
 
 from dacode.memory.backends import SemanticHit
 from dacode.memory.embedder import EmbedError, Embedder

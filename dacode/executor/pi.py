@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dacode.executor.base import ExecResult
-from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, wrap_command
+from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, allowed_env, wrap_command
 
 if TYPE_CHECKING:
     from dacode.harness.models import HarnessVariant
@@ -108,6 +108,7 @@ class PiExecutor:
             os.environ.get("NODE_PATH"),
         )
         node = shutil.which("node")
+        node_dir = Path(node).resolve().parent if node else None
         if node:
             real = Path(node).resolve()
             policy = policy.with_paths(real, real.parent)
@@ -116,19 +117,37 @@ class PiExecutor:
         # agent directory writable; auth.json is still masked by the policy's
         # hidden_files, which wrap_command applies after writable binds.
         # The writable mount shadows the earlier read-only bind of the
-        # binary's directory (and of the node runtime just above), so both are
-        # re-bound read-only *after* it: otherwise a trial could replace an
-        # executable the host itself runs outside the sandbox (audit #3).
+        # binary's directory (and of the node runtime just above), so both —
+        # plus any sibling code, extension, plugin, or hook directories under
+        # ~/.pi — are re-bound read-only *after* it: otherwise a trial could
+        # replace an executable or module the host itself runs outside the
+        # sandbox (audit #3 / CRIT-02).
+        pi_dir = Path.home() / ".pi"
+        protected: list[Path] = list(policy.protected_paths)
+        for candidate in (
+            Path(binary_path).resolve().parent if binary_path else None,
+            node_dir,
+            *(
+                base / sub
+                for base in (pi_dir, pi_dir / "agent")
+                for sub in (
+                    "bin", "lib", "dist", "node_modules",
+                    "extensions", "plugins", "hooks", "skills",
+                )
+            ),
+        ):
+            if candidate and candidate not in protected:
+                protected.append(candidate)
+        hidden: list[Path] = list(policy.hidden_files)
+        if (os.environ.get("DACODE_PI_AUTH") or "mask").lower() != "bind":
+            auth = pi_dir / "agent" / "auth.json"
+            if auth not in hidden:
+                hidden.append(auth)
         return dataclasses.replace(
             policy,
-            writable_paths=policy.writable_paths + (Path.home() / ".pi",),
-            protected_paths=tuple({
-                p for p in (
-                    Path(binary_path).resolve().parent if binary_path else None,
-                    (Path(shutil.which("node")).resolve().parent
-                     if shutil.which("node") else None),
-                ) if p
-            }),
+            writable_paths=policy.writable_paths + (pi_dir,),
+            protected_paths=tuple(protected),
+            hidden_files=tuple(hidden),
         )
 
     def run(self, variant: "HarnessVariant", workspace: str | Path) -> ExecResult:
@@ -154,6 +173,16 @@ class PiExecutor:
                 cmd = wrap_command(cmd, workspace=workspace, policy=policy, env=env)
             except IsolationUnavailable as exc:
                 return ExecResult(exit_code=126, stderr=f"isolation unavailable: {exc}", command="")
+            child_env = allowed_env(policy, env)
+        else:
+            child_env = allowed_env(
+                IsolationPolicy(
+                    enabled=False,
+                    network=True if self.isolation is None else self.isolation.network,
+                    env_allow=("HOME", *(self.isolation.env_allow if self.isolation else ())),
+                ),
+                env,
+            )
         try:
             proc = subprocess.run(
                 cmd,
@@ -161,7 +190,7 @@ class PiExecutor:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                env=env,
+                env=child_env,
             )
         except subprocess.TimeoutExpired as exc:
             return ExecResult(

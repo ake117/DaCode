@@ -26,7 +26,7 @@ from pathlib import Path
 
 from dacode.memory.backends import SemanticHit, SemanticBackend, resolve, status
 from dacode.memory.embedder import Embedder
-from dacode.memory.vectors import VectorStore
+from dacode.memory.vectors import VectorStore, _is_safe_vault_file
 from dacode.memory.backends.hermes import SemanticIndex
 
 __all__ = [
@@ -75,16 +75,23 @@ def _resolve_in_vault(vault: Path, relative: str | Path) -> Path | None:
     """Resolve ``relative`` inside ``vault`` or return None.
 
     A semantic backend or an embeddings row is untrusted input (it can be a `..`
-    path or an absolute one); without this the note reader would happily return the
-    head of any host file into a prompt.
+    path, an absolute one, or a symlink); without this the note reader would
+    happily return the head of any host file into a prompt.
     """
     candidate = Path(relative)
     if candidate.is_absolute():
         return None
-    resolved = (vault / candidate).resolve()
-    try:
-        resolved.relative_to(vault.resolve())
-    except ValueError:
+    vault_real = vault.resolve()
+    norm = Path(os.path.normpath(str(vault_real / candidate)))
+    if not norm.is_relative_to(vault_real):
+        return None
+    current = vault_real
+    for part in norm.relative_to(vault_real).parts:
+        current = current / part
+        if current.is_symlink():
+            return None
+    resolved = norm.resolve()
+    if not resolved.is_relative_to(vault_real):
         return None
     return resolved
 
@@ -116,6 +123,9 @@ class VaultMemory:
         self.scope: tuple[str, ...] = (
             (scope,) if isinstance(scope, str) else tuple(scope or ())
         )
+        for project in self.scope:
+            if not project or project in {".", ".."} or "/" in project or "\\" in project:
+                raise ValueError(f"invalid vault scope {project!r}: must be a single project name")
         if include_globs is None:
             include_globs = ("**/*.md",) if not self.scope else tuple(
                 glob
@@ -126,6 +136,9 @@ class VaultMemory:
         self._scope_dirs: tuple[Path, ...] = tuple(
             (self.vault / f"Projects/{project}").resolve() for project in self.scope
         ) + ((self.vault / "shared").resolve(),) if self.scope else ()
+        self._write_scope_dirs: tuple[Path, ...] = tuple(
+            (self.vault / f"Projects/{project}").resolve() for project in self.scope
+        )
         self.exclude_dirs = {d.lower() for d in exclude_dirs}
         self.max_note_chars = max_note_chars
         self.semantic_mode = semantic
@@ -136,21 +149,44 @@ class VaultMemory:
     # -- reading -----------------------------------------------------------
 
     def _in_scope(self, path: Path) -> bool:
-        """Is ``path`` under one of this memory's scope prefixes?"""
+        """Is ``path`` inside the vault and under one of this memory's read scope prefixes?"""
+        resolved = path.resolve()
+        if not resolved.is_relative_to(self.vault):
+            return False
         if not self._scope_dirs:
             return True
-        resolved = path.resolve()
         return any(resolved.is_relative_to(d) for d in self._scope_dirs)
+
+    def _in_write_scope(self, folder: str | Path) -> bool:
+        """May ``ingest()`` write into ``folder``?"""
+        candidate = Path(folder)
+        if candidate.is_absolute():
+            return False
+        norm = Path(os.path.normpath(str(self.vault / candidate)))
+        if not norm.is_relative_to(self.vault):
+            return False
+        current = self.vault
+        for part in norm.relative_to(self.vault).parts:
+            current = current / part
+            if current.is_symlink():
+                return False
+        resolved = norm.resolve()
+        if not resolved.is_relative_to(self.vault):
+            return False
+        if not self._write_scope_dirs:
+            return True
+        return any(resolved.is_relative_to(d) for d in self._write_scope_dirs)
 
     def _iter_notes(self):
         seen: set[Path] = set()
         for pattern in self.include_globs:
             for path in self.vault.glob(pattern):
-                # A symlink inside a scope's folder could point at another
-                # project's lessons — never follow one (path.is_file() would).
-                if path.is_symlink() or not path.is_file() or path in seen:
+                # A symlink inside a scope's folder (or a symlinked parent directory)
+                # could point at another project's lessons or host files — never follow one.
+                if path in seen or not _is_safe_vault_file(self.vault, path):
                     continue
-                if any(part.lower() in self.exclude_dirs for part in path.parts):
+                rel = path.relative_to(self.vault)
+                if any(part.lower() in self.exclude_dirs for part in rel.parts):
                     continue
                 if not self._in_scope(path):
                     continue
@@ -294,38 +330,39 @@ class VaultMemory:
         """
         if not query or not query.strip():
             return []
+        from dacode.redact import redact
+
         tokens = self._tokenize(query)
         if not tokens:
             # No keyword tokens ("?" or a symbol only): the semantic backend may
             # still have something. Returning [] here skipped it entirely (audit M5).
-            return self._blend([], self._semantic_hits(query, limit=limit), limit)
-        hits: list[MemoryHit] = []
-        for note in self._iter_notes():
-            try:
-                text = note.read_text(encoding="utf-8", errors="replace")[: self.max_note_chars]
-            except OSError:
-                continue
-            meta, body = self._split_frontmatter(text)
-            title = meta.get("title") or note.stem
-            score = self._score(tokens, str(title), body)
-            if score >= min_score:
-                hits.append(
-                    MemoryHit(
-                        path=note,
-                        title=str(title),
-                        score=round(score, 3),
-                        snippet=self._snippet(tokens, body),
-                        tags=tuple(
-                            t.strip() for t in str(meta.get("tags", "")).replace(",", " ").split()
-                            if t.strip()
-                        ),
+            raw_hits = self._blend([], self._semantic_hits(query, limit=limit), limit)
+        else:
+            hits: list[MemoryHit] = []
+            for note in self._iter_notes():
+                try:
+                    text = note.read_text(encoding="utf-8", errors="replace")[: self.max_note_chars]
+                except OSError:
+                    continue
+                meta, body = self._split_frontmatter(text)
+                title = meta.get("title") or note.stem
+                score = self._score(tokens, str(title), body)
+                if score >= min_score:
+                    hits.append(
+                        MemoryHit(
+                            path=note,
+                            title=str(title),
+                            score=round(score, 3),
+                            snippet=self._snippet(tokens, body),
+                            tags=tuple(
+                                t.strip() for t in str(meta.get("tags", "")).replace(",", " ").split()
+                                if t.strip()
+                            ),
+                        )
                     )
-                )
-        from dacode.redact import redact
-
-        hits.sort(key=lambda h: (-h.score, str(h.path)))
-        semantic_hits = self._semantic_hits(query, limit)
-        raw_hits = hits[:limit] if not semantic_hits else self._blend(hits, semantic_hits, limit)
+            hits.sort(key=lambda h: (-h.score, str(h.path)))
+            semantic_hits = self._semantic_hits(query, limit)
+            raw_hits = hits[:limit] if not semantic_hits else self._blend(hits, semantic_hits, limit)
         return [
             MemoryHit(
                 path=h.path,
@@ -363,13 +400,13 @@ class VaultMemory:
     def ingest(self, lesson: Lesson, *, folder: str | None = None) -> Path:
         if folder is None:
             folder = self.default_folder
-        if not self._in_scope(self.vault / folder):
+        if not self._in_write_scope(folder):
             raise ValueError(
                 f"ingest folder {folder!r} is outside this memory's scope "
                 f"{self.scope!r} — a scoped run writes only its own project"
             )
         """Persist ``lesson`` as a markdown note. Returns the written path."""
-        target_dir = self.vault / folder
+        target_dir = (self.vault / folder).resolve()
         target_dir.mkdir(parents=True, exist_ok=True)
         slug = re.sub(r"[^A-Za-z0-9\u0E00-\u0E7F]+", "-", lesson.title).strip("-")
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
