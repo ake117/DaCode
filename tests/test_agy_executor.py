@@ -100,7 +100,9 @@ def test_sandbox_policy_carries_home_runtime_dir_dbus_and_auth(monkeypatch, tmp_
     fake_agy.parent.mkdir()
     fake_agy.write_text("#!/bin/sh\n")
     monkeypatch.setattr("dacode.executor.agy.shutil.which", lambda cmd: str(fake_agy))
-    bus = Path("/run/user/1000/bus")
+    import os
+
+    bus = Path("/run/user") / str(os.getuid()) / "bus"
     monkeypatch.setattr(bus.parent.__class__, "exists", lambda self: True, raising=False)
     monkeypatch.setattr(Path, "exists", lambda self: True)
     executor = AgyExecutor(isolation=IsolationPolicy(enabled=True, network=True))
@@ -126,4 +128,4 @@ def test_agy_dbus_off_drops_the_bus(monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "exists", lambda self: True)
     executor = AgyExecutor(isolation=IsolationPolicy(enabled=True, network=True))
     policy = executor._sandbox_policy(str(fake_agy))
-    assert Path("/run/user/1000/bus") not in policy.protected_paths
+    assert Path("/run/user") / str(os.getuid()) / "bus" not in policy.protected_paths
