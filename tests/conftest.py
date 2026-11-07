@@ -7,6 +7,23 @@ from pathlib import Path
 
 import pytest
 
+# Test fixtures simulate user repos and workspaces — they must never sit in a
+# directory the sandbox treats as a credential zone. On machines whose tempdir
+# is under a secret-bearing home directory (e.g. terminus's TMPDIR is
+# ~/.hermes/cache/scratch, and ~/.hermes holds a credentials .env), the
+# Nov-2026 HIGH-01 guard correctly refuses to bind fixture paths that resolve
+# into that zone, and four fixture-dependent tests fail only there — CI, whose
+# tempdir is /tmp, never sees it. Pinning pytest's basetemp to the system temp
+# directory keeps the suite hermetic in exactly the way CI sees it.
+
+
+def pytest_configure(config):
+    # tempfile.gettempdir() honours $TMPDIR, which is exactly the variable
+    # that points into the secret zone on some hosts — go to /tmp directly.
+    basetemp = Path("/tmp/dacode-pytest")
+    basetemp.mkdir(parents=True, exist_ok=True)
+    config.option.basetemp = str(basetemp)
+
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
