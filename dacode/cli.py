@@ -24,6 +24,7 @@ from dacode.harness.models import HarnessResult
 from dacode.memory import VaultMemory, status
 from dacode.memory.backends.local import LocalStoreBackend
 from dacode.orchestrator import DaCodeRig
+from dacode.redact import sanitize_terminal
 from dacode.sandbox import GitSandbox
 
 __all__ = ["main", "build_parser"]
@@ -253,23 +254,23 @@ def _print_result(result: HarnessResult) -> None:
     print("=" * 62)
     print(f"  DaCode result — {'PASS ✅' if result.passed else 'FAIL ❌'}")
     print("=" * 62)
-    print(f"  task      : {result.task}")
+    print(f"  task      : {sanitize_terminal(result.task)}")
     print(f"  rounds    : {result.rounds}")
     print(f"  variants  : {len(result.variants)} probed")
-    print(f"  best      : {best.id} ({best.label})  score={best.score}")
+    print(f"  best      : {sanitize_terminal(best.id)} ({sanitize_terminal(best.label)})  score={best.score}")
     if best.probe:
         p = best.probe
         print(f"  tests     : {p.tests_passed}/{p.tests_total} pass  (exit {p.exit_code})")
-        print(f"  workspace : {p.workspace}")
+        print(f"  workspace : {sanitize_terminal(p.workspace)}")
     if result.lesson_path:
-        print(f"  lesson    : {result.lesson_path}")
+        print(f"  lesson    : {sanitize_terminal(result.lesson_path)}")
     if result.needs_human_review:
         print("  note      : needs human review — the judge stopped the run")
     print("=" * 62)
     for v in sorted(result.variants, key=lambda x: x.score or 0, reverse=True):
         mark = "★" if v is best else " "
         t = f"{v.probe.tests_passed}/{v.probe.tests_total}" if v.probe else "?"
-        print(f"  {mark} {v.id:<6} {v.label:<20} score={v.score}  tests={t}")
+        print(f"  {mark} {sanitize_terminal(v.id):<6} {sanitize_terminal(v.label):<20} score={v.score}  tests={t}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -375,9 +376,9 @@ def main(argv: list[str] | None = None) -> int:
         for hit in hits:
             # A vault note can contain a key someone pasted into a lesson; the
             # terminal is an output boundary like any other (audit, Oct 2026).
-            print(f"[{hit.score:>6}] {redact(hit.title)}")
-            print(f"          {hit.path}")
-            print(f"          {redact(hit.snippet[:160])}…")
+            print(f"[{hit.score:>6}] {sanitize_terminal(redact(hit.title))}")
+            print(f"          {sanitize_terminal(hit.path)}")
+            print(f"          {sanitize_terminal(redact(hit.snippet[:160]))}…")
         return 0
 
     if args.command == "sandbox":
@@ -414,9 +415,9 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             for hit in hits:
                 when = time.strftime("%Y-%m-%d %H:%M", time.localtime(hit["ts"]))
-                print(f"[{when}] {hit['kind']:<7} {hit['task'][:90]}")
+                print(f"[{when}] {sanitize_terminal(hit['kind']):<7} {sanitize_terminal(hit['task'])[:90]}")
                 if hit["label"] or hit["detail"]:
-                    print(f"           {hit['label']}  {hit['detail']}")
+                    print(f"           {sanitize_terminal(hit['label'])}  {sanitize_terminal(hit['detail'])}")
             return 0
         if args.state_command == "stats":
             info = state.stats()
@@ -434,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
             for row in rows:
                 print(
                     f"  {row['tests_passed']}/{row['tests_total']}  "
-                    f"{str(row['label']):<24} {row['task'][:80]}"
+                    f"{sanitize_terminal(row['label']):<24} {sanitize_terminal(row['task'])[:80]}"
                 )
             return 0
         if args.state_command == "rebuild":

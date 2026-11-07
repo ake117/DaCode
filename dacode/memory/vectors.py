@@ -50,6 +50,20 @@ def _normalize(vector: list[float]) -> list[float]:
     return [value / norm for value in vector]
 
 
+def _is_safe_vault_file(vault: Path, path: Path) -> bool:
+    """True when ``path`` is a regular file inside ``vault`` with no symlink components."""
+    vault_real = vault.resolve()
+    norm = Path(os.path.normpath(str(path)))
+    if not norm.is_relative_to(vault_real):
+        return False
+    current = vault_real
+    for part in norm.relative_to(vault_real).parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    return current.is_file() and current.resolve().is_relative_to(vault_real)
+
+
 class VectorStore:
     def __init__(self, path: str | Path | None = None) -> None:
         raw = path or os.environ.get("DACODE_EMBED_DB") or default_path()
@@ -62,8 +76,18 @@ class VectorStore:
                 os.chmod(parent, 0o700)
             except OSError:
                 pass
+        if str(self.path) != ":memory:" and not self.path.exists():
+            try:
+                os.close(os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600))
+            except OSError:
+                pass
         self._con = sqlite3.connect(str(self.path), timeout=10.0)
         self._con.executescript(_SCHEMA)
+        if str(self.path) != ":memory:" and self.path.exists() and not self.path.is_symlink():
+            try:
+                os.chmod(self.path, 0o600)
+            except OSError:
+                pass
 
     # -- writes ------------------------------------------------------------
 
@@ -116,9 +140,12 @@ class VectorStore:
         todo: list[tuple[str, float, str]] = []
         keep: set[str] = set()
         for note in vault.glob(include_glob):
-            if not note.is_file() or any(part.lower() in excluded for part in note.parts):
+            if not _is_safe_vault_file(vault, note):
                 continue
-            rel = str(note.relative_to(vault))
+            rel_path = note.relative_to(vault)
+            if any(part.lower() in excluded for part in rel_path.parts):
+                continue
+            rel = str(rel_path)
             keep.add(rel)
             try:
                 mtime = note.stat().st_mtime

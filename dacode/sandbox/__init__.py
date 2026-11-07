@@ -124,15 +124,7 @@ class GitSandbox:
         self._git("worktree", "add", "-B", branch, str(path), base_ref or self.base_ref)
         return path
 
-    def checkpoint(self, task_id: str, message: str) -> str:
-        """Stage everything in the worktree and commit. Returns the new SHA.
-
-        This runs on the host, outside any sandbox, so it must not execute anything
-        a trial wrote: a worktree's `.git` is a pointer file, and a trial that
-        replaces it with a directory can ship `core.fsmonitor` or a `pre-commit`
-        hook (external audit, Oct 2026). Hooks are disabled for these calls and a
-        non-file `.git` is refused outright.
-        """
+    def _verify_worktree_pointer(self, task_id: str) -> Path:
         path = self.worktree_path(task_id)
         if not path.exists():
             raise SandboxError(f"no worktree for task {task_id!r} at {path}")
@@ -162,16 +154,29 @@ class GitSandbox:
                 f"{dot_git} points outside {expected_root} ({gitdir_target}) — refusing to "
                 "run git on a redirected worktree pointer"
             )
+        return path
+
+    def checkpoint(self, task_id: str, message: str) -> str:
+        """Stage everything in the worktree and commit. Returns the new SHA.
+
+        This runs on the host, outside any sandbox, so it must not execute anything
+        a trial wrote: a worktree's `.git` is a pointer file, and a trial that
+        replaces it with a directory can ship `core.fsmonitor` or a `pre-commit`
+        hook (external audit, Oct 2026). Hooks are disabled for these calls and a
+        non-file `.git` is refused outright.
+        """
+        path = self._verify_worktree_pointer(task_id)
         self._git("add", "-A", cwd=path)
         self._git("commit", "--allow-empty", "-m", message, cwd=path)
         return self._git("rev-parse", "HEAD", cwd=path).strip()
 
     def head_sha(self, task_id: str) -> str:
-        return self._git("rev-parse", "HEAD", cwd=self.worktree_path(task_id)).strip()
+        path = self._verify_worktree_pointer(task_id)
+        return self._git("rev-parse", "HEAD", cwd=path).strip()
 
     def rollback(self, task_id: str, ref: str = "HEAD~1") -> str:
         """Hard-reset the trial worktree to ``ref``. Returns the resulting SHA."""
-        path = self.worktree_path(task_id)
+        path = self._verify_worktree_pointer(task_id)
         self._git("reset", "--hard", ref, cwd=path)
         self._git("clean", "-fd", cwd=path)
         return self._git("rev-parse", "HEAD", cwd=path).strip()

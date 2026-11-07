@@ -8,6 +8,7 @@ prompt that starts with "-" can be read as a flag.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from dacode.executor.agy import AgyExecutor
@@ -93,3 +94,37 @@ def test_sandbox_policy_binds_gemini_writable_and_node_readonly(monkeypatch, tmp
     # the writable home mount must not shadow the binary/node read-only binds
     assert fake_agy.resolve().parent in policy.protected_paths
     assert fake_node.resolve().parent in policy.protected_paths
+
+
+def test_sandbox_policy_carries_home_runtime_dir_dbus_and_auth(monkeypatch, tmp_path):
+    fake_agy = tmp_path / "bin" / "agy"
+    fake_agy.parent.mkdir()
+    fake_agy.write_text("#!/bin/sh\n")
+    monkeypatch.setattr("dacode.executor.agy.shutil.which", lambda cmd: str(fake_agy))
+    bus = Path("/run/user") / str(os.getuid()) / "bus"
+    monkeypatch.setattr(bus.parent.__class__, "exists", lambda self: True, raising=False)
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    executor = AgyExecutor(isolation=IsolationPolicy(enabled=True, network=True))
+    policy = executor._sandbox_policy(str(fake_agy))
+    # HOME + XDG_RUNTIME_DIR must survive bwrap's --clearenv (agy needs both)
+    assert "HOME" in policy.env_allow
+    assert "XDG_RUNTIME_DIR" in policy.env_allow
+    # the D-Bus session bus is the only way to the keyring-backed token
+    assert bus in policy.protected_paths
+    # agy's real credentials live under ~/.config/antigravity, not ~/.gemini
+    config_dir = Path.home() / ".config" / "antigravity"
+    assert config_dir in policy.writable_paths
+    assert config_dir / "credential-user-scope" in policy.protected_paths
+    assert config_dir / "plugin-secrets.json" in policy.protected_paths
+
+
+def test_agy_dbus_off_drops_the_bus(monkeypatch, tmp_path):
+    fake_agy = tmp_path / "bin" / "agy"
+    fake_agy.parent.mkdir()
+    fake_agy.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("DACODE_AGY_DBUS", "off")
+    monkeypatch.setattr("dacode.executor.agy.shutil.which", lambda cmd: str(fake_agy))
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    executor = AgyExecutor(isolation=IsolationPolicy(enabled=True, network=True))
+    policy = executor._sandbox_policy(str(fake_agy))
+    assert Path("/run/user") / str(os.getuid()) / "bus" not in policy.protected_paths

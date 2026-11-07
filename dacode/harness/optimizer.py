@@ -23,8 +23,8 @@ import sys
 from typing import TYPE_CHECKING
 
 from dacode import runlog
-
 from dacode.harness.models import HarnessResult, HarnessVariant, ProbeResult
+from dacode.redact import redact
 
 if TYPE_CHECKING:
     from dacode.discipline.critic import PstackCritic
@@ -221,12 +221,12 @@ class HarnessOptimizer:
                 tests_passed=report.tests_passed,
                 critique_passed=report.passed,
                 critique_score=report.score,
-                stdout=exec_result.stdout[-4000:],
-                stderr=exec_result.stderr[-2000:],
+                stdout=redact(exec_result.stdout[-4256:])[-4000:],
+                stderr=redact(exec_result.stderr[-2256:])[-2000:],
                 elapsed_s=round(time.perf_counter() - started, 3),
                 tests_skipped=getattr(report, "tests_skipped", 0),
                 model=variant.model or getattr(self.executor, "model", None),
-                gate_output=_gate_evidence(report),
+                gate_output=redact(_gate_evidence(report)),
                 errors=[f.check for f in getattr(report, "findings", []) if f.severity == "error"],
             )
         except Exception as exc:  # noqa: BLE001 - a failed trial must not kill the run
@@ -236,7 +236,7 @@ class HarnessOptimizer:
                 exit_code=1,
                 critique_passed=False,
                 critique_score=0.0,
-                stderr=f"trial error: {exc!r}",
+                stderr=redact(f"trial error: {exc!r}"),
                 elapsed_s=round(time.perf_counter() - started, 3),
                 model=variant.model or getattr(self.executor, "model", None),
             )
@@ -296,11 +296,11 @@ class HarnessOptimizer:
             ]
             for check in probe.errors[:5]:
                 lines.append(f"  gate error: {check}")
-            tail = (probe.gate_output or probe.stderr or "").strip()
+            tail = redact((probe.gate_output or probe.stderr or "")).strip()
             if tail:
                 lines.append("  evidence tail: " + tail[-800:].replace("\n", " | "))
             blocks.append("\n".join(lines))
-        return "\n".join(blocks)[:cap]
+        return redact("\n".join(blocks))[:cap]
 
     def next_fleet_model(self) -> str | None:
         """Pick a model whose family has not been tried yet.
@@ -663,7 +663,13 @@ def _family(model: str) -> str:
     return head.split("-")[0].lower()
 
 
-_CONTROL_SEQ_RE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-9;?]*[A-Za-z])|[\x00-\x1f\x7f]")
+_CONTROL_SEQ_RE = re.compile(
+    r"(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f]).*?(?:\x07|\x1b\\|\x9c|$)"
+    r"|(?:\x1b\[|\x9b)[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]"
+    r"|\x1b[\x20-\x2f]*[\x30-\x7e]"
+    r"|[\x00-\x1f\x7f-\x9f]",
+    re.DOTALL,
+)
 
 
 def _sanitize_label(text: str) -> str:

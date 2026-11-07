@@ -2,12 +2,34 @@
 
 from __future__ import annotations
 
+import math
 import os
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
 __all__ = ["DaCodeConfig"]
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+    except ValueError:
+        return default
+    return val if math.isfinite(val) and val > 0 else default
 
 
 @dataclass
@@ -53,15 +75,15 @@ class DaCodeConfig:
             model=os.environ.get("DACODE_MODEL", "deepseek/deepseek-v4.1-flash"),
             executor=os.environ.get("DACODE_EXECUTOR", "pi"),
             executor_provider=os.environ.get("DACODE_EXECUTOR_PROVIDER", "openrouter"),
-            budget=int(os.environ.get("DACODE_BUDGET", "2")),
-            variants_per_round=int(os.environ.get("DACODE_VARIANTS", "2")),
+            budget=_env_int("DACODE_BUDGET", 2),
+            variants_per_round=_env_int("DACODE_VARIANTS", 2),
             semantic=os.environ.get("DACODE_SEMANTIC", "auto"),
             judge=os.environ.get("DACODE_JUDGE") or None,
             escalate_models=_env_model_ladder(),
             test_command=_env_test_command(),
             test_glob=os.environ.get("DACODE_TEST_GLOB", "test_*.py"),
-            variant_timeout=float(os.environ.get("DACODE_VARIANT_TIMEOUT", "900")),
-            parallel=int(os.environ.get("DACODE_PARALLEL", "1")),
+            variant_timeout=_env_float("DACODE_VARIANT_TIMEOUT", 900.0),
+            parallel=_env_int("DACODE_PARALLEL", 1),
             fleet=[m.strip() for m in os.environ.get("DACODE_FLEET", "").split(",") if m.strip()],
             isolate=os.environ.get("DACODE_ISOLATE", "bwrap"),
             isolate_network=os.environ.get("DACODE_ISOLATE_NETWORK", "").lower() in {"1", "true", "on", "yes"},

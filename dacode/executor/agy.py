@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from dacode.executor.base import ExecResult
 from dacode.harness.optimizer import DEFAULT_SYSTEM_PROMPT
-from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, wrap_command
+from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, allowed_env, wrap_command
 
 if TYPE_CHECKING:
     from dacode.harness.models import HarnessVariant
@@ -99,15 +99,93 @@ class AgyExecutor:
         node_dir = Path(node).resolve().parent if node else None
         if node_dir:
             policy = policy.with_paths(node_dir, node_dir)
+        gemini_dir = Path.home() / ".gemini"
+        # agy's login credentials are NOT under ~/.gemini — they live in
+        # ~/.config/antigravity (verified: a sandboxed trial without it dies
+        # with "authentication required" while a standalone `agy -p` succeeds).
+        config_dir = Path.home() / ".config" / "antigravity"
+        protected: list[Path] = list(policy.protected_paths)
+        for candidate in (
+            Path(binary_path).resolve().parent if binary_path else None,
+            node_dir,
+            *(
+                base / sub
+                for base in (gemini_dir, gemini_dir / "antigravity")
+                for sub in (
+                    "hooks", "skills", "plugins", "rules", "agents", "builtin",
+                    "extensions", "node_modules", "dist", "lib", "bin",
+                    "settings.json", "mcp_config.json",
+                )
+            ),
+        ):
+            if candidate and candidate not in protected:
+                protected.append(candidate)
+        # Auth handling. agy has no env-key path: it authenticates from OAuth
+        # state under ~/.gemini (unlike Pi, whose provider key arrives through
+        # the environment), so masking those files by default would make every
+        # sandboxed trial die at login. Default is therefore bind: the auth
+        # files are re-bound READ-ONLY after the writable ~/.gemini mount (the
+        # trial can use them, not rewrite them) — the same trust level as the
+        # provider keys a networked trial already sees via NETWORK_ENV. The
+        # gate never runs the executor's policy, so the gate still sees none
+        # of this. Set DACODE_AGY_AUTH=mask to hide them instead (only works
+        # if you inject credentials another way).
+        hidden: list[Path] = list(policy.hidden_files)
+        auth_files = (
+            gemini_dir / "antigravity" / "mcp_config.json",
+            gemini_dir / "oauth_creds.json",
+            gemini_dir / "google_accounts.json",
+            # the real login state — read-only so a trial can authenticate but
+            # not rotate or exfiltrate-write the tokens it holds
+            config_dir / "credential-user-scope",
+            config_dir / "plugin-secrets.json",
+        )
+        if (os.environ.get("DACODE_AGY_AUTH") or "bind").lower() == "mask":
+            for secret in auth_files:
+                if secret not in hidden:
+                    hidden.append(secret)
+        else:
+            for secret in auth_files:
+                if secret not in protected:
+                    protected.append(secret)
+        # Auth lives in the user keyring, reached over the D-Bus session bus
+        # (/run/user/$UID/bus). The sandbox tmpfs's /run hides that socket, so
+        # agy falls back to a token file that does not exist and dies with
+        # "authentication required" (verified with an in-sandbox strace: the
+        # keyring read fails, the file fallback misses). Bind the bus socket —
+        # DACODE_AGY_DBUS=off refuses it, at the cost of agy never starting.
+        # Trust note: this is the *executor* policy, which already carries the
+        # network and the agent's own OAuth token (bound read-only); the gate
+        # never runs under it, so the tested code never sees the bus.
+        if (os.environ.get("DACODE_AGY_DBUS") or "bind").lower() != "off":
+            bus = Path("/run/user") / str(os.getuid()) / "bus"
+            # protected_paths ro-binds after the writable mounts AND accepts
+            # files — the writable loop only binds directories, which would
+            # silently skip the socket. D-Bus clients locate the bus via
+            # $XDG_RUNTIME_DIR, so that name rides along in env_allow.
+            if bus.exists() and bus not in policy.protected_paths:
+                protected.append(bus)
+            if "XDG_RUNTIME_DIR" not in policy.env_allow:
+                policy = dataclasses.replace(
+                    policy, env_allow=policy.env_allow + ("XDG_RUNTIME_DIR",)
+                )
         return dataclasses.replace(
             policy,
-            writable_paths=policy.writable_paths + (Path.home() / ".gemini",),
-            protected_paths=tuple({
-                p for p in (
-                    Path(binary_path).resolve().parent if binary_path else None,
-                    node_dir,
-                ) if p
-            }),
+            # agy is a Go binary that refuses to start without $HOME, and it
+            # resolves its state tree (~/.gemini) from it. bwrap clears the
+            # environment, so HOME must be re-set explicitly — the value is a
+            # path name, not a secret; the directory itself stays a tmpfs with
+            # only the binds this policy declares.
+            env_allow=policy.env_allow + ("HOME",),
+            writable_paths=policy.writable_paths
+            + (
+                gemini_dir,
+                # writable like ~/.gemini, but the two credential files inside
+                # it are re-bound read-only right below (later mounts win)
+                config_dir,
+            ),
+            protected_paths=tuple(protected),
+            hidden_files=tuple(hidden),
         )
 
     def run(self, variant: "HarnessVariant", workspace: str | Path) -> ExecResult:
@@ -128,6 +206,15 @@ class AgyExecutor:
                 cmd = wrap_command(cmd, workspace=workspace, policy=policy)
             except IsolationUnavailable as exc:
                 return ExecResult(exit_code=126, stderr=f"isolation unavailable: {exc}", command="")
+            child_env = allowed_env(policy)
+        else:
+            child_env = allowed_env(
+                IsolationPolicy(
+                    enabled=False,
+                    network=True if self.isolation is None else self.isolation.network,
+                    env_allow=("HOME", *(self.isolation.env_allow if self.isolation else ())),
+                )
+            )
         try:
             proc = subprocess.run(
                 cmd,
@@ -135,6 +222,7 @@ class AgyExecutor:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                env=child_env,
             )
         except subprocess.TimeoutExpired as exc:
             return ExecResult(

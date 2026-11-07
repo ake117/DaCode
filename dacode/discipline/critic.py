@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import shlex
+import stat
 import subprocess
 import tempfile
 import xml.etree.ElementTree as xml
@@ -16,6 +18,7 @@ from dacode.discipline.checks import Finding, check_python_test
 from dacode.sandbox.bwrap import (
     IsolationPolicy,
     IsolationUnavailable,
+    allowed_env,
     interpreter_binds,
     wrap_command,
 )
@@ -95,11 +98,25 @@ class PstackCritic:
         # intent and some tasks legitimately span files.
         self.broad_diff_limit = max(1, broad_diff_limit)
 
+    def _is_test_file_name(self, name: str) -> bool:
+        return fnmatch.fnmatch(name, self.test_glob) or name.endswith("_test.py")
+
     def _scan_tests(self, workspace: Path) -> tuple[list[Finding], int]:
         findings: list[Finding] = []
         count = 0
-        for path in sorted(workspace.rglob(self.test_glob)):
-            if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in path.parts):
+        for path in sorted(workspace.rglob("*")):
+            if not path.is_file():
+                continue
+            try:
+                relative = path.relative_to(workspace)
+            except ValueError:
+                continue
+            if any(
+                part in {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache"}
+                for part in relative.parts
+            ):
+                continue
+            if not self._is_test_file_name(path.name):
                 continue
             # The static checks are AST-based and Python-only.  A non-Python
             # suite (C, JS, …) still gets the real test gate below, but must
@@ -131,7 +148,7 @@ class PstackCritic:
                 continue
             if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in relative.parts):
                 continue
-            if not fnmatch.fnmatch(path.name, self.test_glob):
+            if not self._is_test_file_name(path.name):
                 continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
@@ -165,7 +182,13 @@ class PstackCritic:
         return (max(total, static), skipped)
 
     def _wrap(
-        self, cmd: list[str], workspace: Path, *, policy=None, read_only: bool = False
+        self,
+        cmd: list[str],
+        workspace: Path,
+        *,
+        policy=None,
+        read_only: bool = False,
+        env: dict[str, str] | None = None,
     ) -> list[str]:
         """Run the gate under bwrap when isolation is on.
 
@@ -178,14 +201,20 @@ class PstackCritic:
         if active is None or not active.enabled:
             return cmd
         policy = active.with_paths(
-            *interpreter_binds(self.test_command),
+            *interpreter_binds(
+                self.test_command, workspace=workspace, trust_workspace=read_only
+            ),
             os.environ.get("VIRTUAL_ENV"),
         )
         # Fail closed: an isolated run that silently fell back to the host would be
         # worse than a failed gate. The exception is re-raised as a failed probe by
         # _run_tests (exit 125) so the caller sees a verdict, not a traceback.
         return wrap_command(
-            cmd, workspace=workspace, policy=policy, read_only_workspace=read_only
+            cmd,
+            workspace=workspace,
+            policy=policy,
+            env=env,
+            read_only_workspace=read_only,
         )
 
     def _run_once(
@@ -204,86 +233,98 @@ class PstackCritic:
         junit: Path | None = None
         cmd = list(command)
         policy = self.isolation
-        if _pytest_like(cmd):
-            junit_dir = Path(tempfile.mkdtemp(prefix="dacode-junit-"))
-            junit = junit_dir / "report.xml"
-            bash_name = Path(cmd[0]).name.lower() if cmd else ""
-            if len(cmd) >= 3 and bash_name in {"bash", "bash.exe"} and cmd[1] == "-c":
-                # `bash -c '<script>' --junitxml=…` hands the flag to bash as a
-                # positional, not to pytest — the report never gets written and
-                # every green run reads as counts_unavailable. Put the flag
-                # inside the script where the test runner can see it.
-                # bash strips backslashes, so a Windows temp path would be
-                # mangled — forward slashes survive both bash and pytest.
-                cmd[2] = f"{cmd[2]} --junitxml={junit.as_posix()}"
-            else:
-                cmd = [*cmd, f"--junitxml={junit}"]
-            if policy is not None and policy.enabled:
-                policy = dataclass_replace(
-                    policy, writable_paths=(*policy.writable_paths, junit_dir)
-                )
+        extra_env: dict[str, str] = {}
         try:
-            proc = subprocess.run(
-                self._wrap(cmd, workspace, policy=policy, read_only=read_only),
-                cwd=str(workspace),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                env=_gate_env(),
-            )
-        except IsolationUnavailable as exc:
-            return 125, "", f"isolation unavailable: {exc}", 0, 0, 0, None, False
-        except FileNotFoundError as exc:
-            return 127, "", f"test command not found: {exc}", 0, 0, 0, None, False
-        except subprocess.TimeoutExpired as exc:
-            return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0, None, False
-        finally:
-            pass
+            if _pytest_like(cmd):
+                junit_dir = Path(tempfile.mkdtemp(prefix="dacode-junit-"))
+                junit = junit_dir / "report.xml"
+                bash_name = Path(cmd[0]).name.lower() if cmd else ""
+                if len(cmd) >= 3 and bash_name in {"bash", "bash.exe"} and cmd[1] == "-c":
+                    # Pass --junitxml via PYTEST_ADDOPTS rather than concatenating onto
+                    # cmd[2]: multi-line gate scripts, trailing `# comments`, or chained
+                    # commands (`pytest && linter`) would comment out or misroute a
+                    # suffix appended to the shell string (audit MED-04).
+                    extra_env["PYTEST_ADDOPTS"] = f"--junitxml={shlex.quote(junit.as_posix())}"
+                else:
+                    cmd = [*cmd, f"--junitxml={junit}"]
+                if policy is not None and policy.enabled:
+                    policy = dataclass_replace(
+                        policy, writable_paths=(*policy.writable_paths, junit_dir)
+                    )
+            gate_env = _gate_env(policy, extra=extra_env)
+            if policy is not None and policy.enabled:
+                gate_allow = tuple(
+                    k
+                    for k in ("PYTEST_DISABLE_PLUGIN_AUTOLOAD", *extra_env.keys())
+                    if k in gate_env and k not in policy.env_allow
+                )
+                if gate_allow:
+                    policy = dataclass_replace(
+                        policy, env_allow=(*policy.env_allow, *gate_allow)
+                    )
+            try:
+                proc = subprocess.run(
+                    self._wrap(
+                        cmd, workspace, policy=policy, read_only=read_only, env=gate_env
+                    ),
+                    cwd=str(workspace),
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    env=gate_env,
+                )
+            except IsolationUnavailable as exc:
+                return 125, "", f"isolation unavailable: {exc}", 0, 0, 0, None, False
+            except FileNotFoundError as exc:
+                return 127, "", f"test command not found: {exc}", 0, 0, 0, None, False
+            except subprocess.TimeoutExpired as exc:
+                return 124, exc.stdout or "", f"timed out after {self.timeout}s", 0, 0, 0, None, False
 
-        xml_counts = None
-        junit_shaped = False
-        counts_source = "stdout"
-        if junit is not None:
-            parsed = _junit_counts(junit, stdout=proc.stdout)
-            if parsed is not None:
-                xml_counts, junit_shaped = parsed
-        stdout_counts = _parse_test_counts(proc.stdout)
-        if stdout_counts[0] == 0 and proc.stderr:
-            # unittest writes its progress dots and summary to stderr, not
-            # stdout: a fully green `python -m unittest` suite used to read as
-            # "no tests were collected" (0/0) and every honest trial failed.
-            # Only fall back when stdout is silent, so pytest summaries — and
-            # anything printed around them — keep meaning exactly what they meant.
-            stderr_counts = _parse_test_counts(proc.stderr)
-            if stderr_counts[0] > 0:
-                stdout_counts = stderr_counts
-                if _parse_unittest_summary(_strip_ansi(proc.stderr).splitlines()) is not None:
-                    counts_source = "unittest_summary"
-        note = None
-        if (
-            xml_counts is not None
-            and xml_counts[0] > 0
-            and stdout_counts[0] > 0        # silence is not a disagreement
-            and not junit_shaped            # subTest totals count units, not elements
-            and xml_counts != stdout_counts
-        ):
-            # The report is written by pytest itself outside the workspace; a
-            # disagreement means something is printing summaries of its own.
-            note = f"counts_disagree:junit={xml_counts} stdout={stdout_counts}"
-        if (
-            junit is not None
-            and proc.returncode == 0
-            and (xml_counts is None or xml_counts[0] == 0)
-        ):
-            # pytest was asked for a report and a "green" run did not produce one:
-            # something ended the process before pytest could write it.
-            note = (note + " " if note else "") + "counts_unavailable:no junit report"
-        counts = xml_counts if (xml_counts and xml_counts[0] > 0) else stdout_counts
-        if xml_counts and xml_counts[0] > 0:
-            counts_source = "report"
-        if junit_dir is not None:
-            shutil.rmtree(junit_dir, ignore_errors=True)
-        return proc.returncode, proc.stdout, proc.stderr, *counts, note, counts_source
+            xml_counts = None
+            junit_shaped = False
+            counts_source = "stdout"
+            if junit is not None:
+                parsed = _junit_counts(junit, stdout=proc.stdout)
+                if parsed is not None:
+                    xml_counts, junit_shaped = parsed
+            stdout_counts = _parse_test_counts(proc.stdout)
+            if stdout_counts[0] == 0 and proc.stderr:
+                # unittest writes its progress dots and summary to stderr, not
+                # stdout: a fully green `python -m unittest` suite used to read as
+                # "no tests were collected" (0/0) and every honest trial failed.
+                # Only fall back when stdout is silent, so pytest summaries — and
+                # anything printed around them — keep meaning exactly what they meant.
+                stderr_counts = _parse_test_counts(proc.stderr)
+                if stderr_counts[0] > 0:
+                    stdout_counts = stderr_counts
+                    if _parse_unittest_summary(_strip_ansi(proc.stderr).splitlines()) is not None:
+                        counts_source = "unittest_summary"
+            note = None
+            if (
+                xml_counts is not None
+                and xml_counts[0] > 0
+                and stdout_counts[0] > 0        # silence is not a disagreement
+                and not junit_shaped            # subTest totals count units, not elements
+                and xml_counts != stdout_counts
+            ):
+                # The report is written by pytest itself outside the workspace; a
+                # disagreement means something is printing summaries of its own.
+                note = f"counts_disagree:junit={xml_counts} stdout={stdout_counts}"
+            if (
+                junit is not None
+                and proc.returncode == 0
+                and (xml_counts is None or xml_counts[0] == 0)
+            ):
+                # pytest was asked for a report and a "green" run did not produce one:
+                # something ended the process before pytest could write it.
+                note = (note + " " if note else "") + "counts_unavailable:no junit report"
+            counts = xml_counts if (xml_counts and xml_counts[0] > 0) else stdout_counts
+            if xml_counts and xml_counts[0] > 0:
+                counts_source = "report"
+            return proc.returncode, proc.stdout, proc.stderr, *counts, note, counts_source
+        finally:
+            if junit_dir is not None:
+                shutil.rmtree(junit_dir, ignore_errors=True)
 
     def _run_tests(
         self, workspace: Path, *, read_only: bool = False
@@ -311,6 +352,16 @@ class PstackCritic:
             return None
         return result
 
+    def _is_test_suite_path(self, relative: Path, *, test_dirs: set[str]) -> bool:
+        name = relative.name
+        return (
+            self._is_test_file_name(name)
+            or name.startswith("test_")
+            or name.startswith("_test")
+            or any(relative.is_relative_to(d) for d in test_dirs)
+            or any(part in {"tests", "test"} for part in relative.parts[:-1])
+        )
+
     def _is_contract_path(self, relative: Path, *, test_dirs: set[str]) -> bool:
         """Is this path part of what decides the gate's answer?
 
@@ -321,18 +372,13 @@ class PstackCritic:
         inside a directory that holds tests.
         """
         name = relative.name
-        if name in self.gate_infra:
+        if name in self.gate_infra or (name.startswith("conftest") and name != "conftest.py"):
             return True
-        if (
-            name.startswith("conftest")
-            or name.startswith("test_")
-            or name.startswith("_test")
-            or name.endswith("_test.py")
-        ):
+        if self._is_test_suite_path(relative, test_dirs=test_dirs):
             return True
-        if fnmatch.fnmatch(name, self.test_glob):
+        if name.endswith(".pth"):
             return True
-        if name.endswith(".py") and relative.stem in SHADOW_NAMES:
+        if name.endswith((".py", ".pyc", ".pyo", ".pyd", ".so")) and name.split(".")[0] in SHADOW_NAMES:
             return True
         if any(part in SHADOW_NAMES for part in relative.parts[:-1]):
             return True
@@ -340,21 +386,31 @@ class PstackCritic:
             part.endswith((".dist-info", ".egg-info")) for part in relative.parts
         ):
             return True
-        if name.endswith(".py") and str(relative.parent) in test_dirs:
-            return True
         return False
 
     def _test_dirs(self, root: Path) -> set[str]:
         dirs: set[str] = set()
         for path in root.rglob("*"):
-            if not path.is_file() or not fnmatch.fnmatch(path.name, self.test_glob):
+            try:
+                relative_path = path.relative_to(root)
+            except ValueError:
                 continue
-            relative = path.parent.relative_to(root)
+            if any(
+                part in {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache"}
+                for part in relative_path.parts
+            ):
+                continue
+            if not (path.is_file() or path.is_symlink()) or not self._is_test_file_name(path.name):
+                continue
+            relative = relative_path.parent
             # A dedicated test directory is contract; the repository root is not,
             # or every source file a trial writes there would look like a test
             # helper (it cannot be told apart from one by path alone).
             if str(relative) != ".":
                 dirs.add(str(relative))
+            for anc in relative_path.parents:
+                if anc.name in {"tests", "test"} and str(anc) != ".":
+                    dirs.add(str(anc))
         return dirs
 
     def snapshot_contract(self, workspace: str | Path) -> dict[str, str]:
@@ -368,6 +424,7 @@ class PstackCritic:
         import hashlib
 
         root = Path(workspace)
+        test_dirs = self._test_dirs(root)
         contract: dict[str, str] = {}
         for path in sorted(root.rglob("*")):
             is_link = path.is_symlink()
@@ -380,7 +437,7 @@ class PstackCritic:
             # __pycache__. Contract-hashing them fails every honest trial.
             if any(part in {".git", "__pycache__", ".pytest_cache"} for part in relative.parts):
                 continue
-            if not self._is_contract_path(relative, test_dirs=self._test_dirs(root)):
+            if not self._is_contract_path(relative, test_dirs=test_dirs):
                 continue
             try:
                 raw = (
@@ -391,22 +448,30 @@ class PstackCritic:
                 contract[str(relative)] = hashlib.sha256(raw).hexdigest()
             except OSError:
                 continue
+        git_digest = _git_contract_digest(root)
+        if git_digest is not None:
+            contract[".git"] = git_digest
         return contract
 
     def _check_contract(
         self, workspace: Path, contract: dict[str, str]
     ) -> list[Finding]:
         """Compare the workspace against a snapshot taken before the trial ran."""
-        import hashlib
-
         findings: list[Finding] = []
-        current = self.snapshot_contract(workspace)
         test_dirs = self._test_dirs(workspace)
+        for key in contract:
+            if key == ".git":
+                continue
+            p = Path(key)
+            if self._is_test_file_name(p.name) and str(p.parent) != ".":
+                test_dirs.add(str(p.parent))
+        current = self.snapshot_contract(workspace)
 
         def _check_for(relative: str) -> str:
+            if relative == ".git":
+                return "tests_infra_modified"
             path = Path(relative)
-            # a file inside a test directory, or a test module, is the suite itself
-            if fnmatch.fnmatch(path.name, self.test_glob) or str(path.parent) in test_dirs:
+            if self._is_test_suite_path(path, test_dirs=test_dirs):
                 return "tests_modified"
             return "tests_infra_modified"
 
@@ -455,13 +520,18 @@ class PstackCritic:
         ``approx(100.0)`` to ``approx(105.0)``). Only git workspaces can be
         checked; elsewhere this is a no-op.
         """
+        unsafe = _unsafe_git_workspace(workspace)
+        if unsafe is not None:
+            return [unsafe]
         try:
             proc = subprocess.run(
                 [
                     "git",
+                    "--no-optional-locks",
                     "-c", "core.hooksPath=/dev/null",
                     "-c", "core.fsmonitor=false",
                     "-c", "core.attributesFile=/dev/null",
+                    "-c", "core.quotePath=false",
                     "status", "--porcelain", "--untracked-files=all",
                 ],
                 cwd=str(workspace),
@@ -492,38 +562,41 @@ class PstackCritic:
 
         findings: list[Finding] = []
         test_dirs = self._test_dirs(workspace)
+        seen: set[str] = set()
         for line in proc.stdout.splitlines():
-            if len(line) < 4:
-                continue
-            path = line[3:].strip().strip('"')
-            # same carve-out as snapshot_contract: bytecode caches appear the
-            # moment any pytest (the trial's own included) touches the tree
-            if any(part in {"__pycache__", ".pytest_cache"} for part in Path(path).parts):
-                continue
-            name = Path(path).name
-            in_test_dir = str(Path(path).parent) in test_dirs
-            if fnmatch.fnmatch(name, self.test_glob) or in_test_dir:
-                findings.append(
-                    Finding(
-                        check="tests_modified",
-                        severity="error",
-                        message=f"trial modified a test file ({path}) — the gate must judge unedited tests",
-                        location=str(workspace / path),
+            for path in _porcelain_paths(line):
+                if path in seen:
+                    continue
+                seen.add(path)
+                rel = Path(path)
+                # same carve-out as snapshot_contract: bytecode caches appear the
+                # moment any pytest (the trial's own included) touches the tree
+                if any(part in {"__pycache__", ".pytest_cache"} for part in rel.parts):
+                    continue
+                if not self._is_contract_path(rel, test_dirs=test_dirs):
+                    continue
+                if self._is_test_suite_path(rel, test_dirs=test_dirs):
+                    findings.append(
+                        Finding(
+                            check="tests_modified",
+                            severity="error",
+                            message=f"trial modified a test file ({path}) — the gate must judge unedited tests",
+                            location=str(workspace / path),
+                        )
                     )
-                )
-            elif name in self.gate_infra:
-                findings.append(
-                    Finding(
-                        check="tests_infra_modified",
-                        severity="error",
-                        message=(
-                            f"trial modified gate infrastructure ({path}) — a conftest or a "
-                            "pytest config can silence or spoof the gate itself; a human must "
-                            "review that change, not a trial"
-                        ),
-                        location=str(workspace / path),
+                else:
+                    findings.append(
+                        Finding(
+                            check="tests_infra_modified",
+                            severity="error",
+                            message=(
+                                f"trial modified gate infrastructure ({path}) — a conftest or a "
+                                "pytest config can silence or spoof the gate itself; a human must "
+                                "review that change, not a trial"
+                            ),
+                            location=str(workspace / path),
+                        )
                     )
-                )
         return findings
 
     def _check_broad_diff(self, workspace: Path) -> list[Finding]:
@@ -536,13 +609,17 @@ class PstackCritic:
         without ever failing a passing run, because a warning here is
         heuristic, not evidence of tampering.
         """
+        if _unsafe_git_workspace(workspace) is not None:
+            return []
         try:
             proc = subprocess.run(
                 [
                     "git",
+                    "--no-optional-locks",
                     "-c", "core.hooksPath=/dev/null",
                     "-c", "core.fsmonitor=false",
                     "-c", "core.attributesFile=/dev/null",
+                    "-c", "core.quotePath=false",
                     "status", "--porcelain", "--untracked-files=all",
                 ],
                 cwd=str(workspace),
@@ -557,17 +634,13 @@ class PstackCritic:
         test_dirs = self._test_dirs(workspace)
         touched: set[str] = set()
         for line in proc.stdout.splitlines():
-            if len(line) < 4:
-                continue
-            path = line[3:].strip().strip('"')
-            if any(part in {"__pycache__", ".pytest_cache"} for part in Path(path).parts):
-                continue
-            name = Path(path).name
-            if fnmatch.fnmatch(name, self.test_glob) or str(Path(path).parent) in test_dirs:
-                continue
-            if name in self.gate_infra:
-                continue
-            touched.add(path)
+            for path in _porcelain_paths(line):
+                rel = Path(path)
+                if any(part in {"__pycache__", ".pytest_cache"} for part in rel.parts):
+                    continue
+                if self._is_contract_path(rel, test_dirs=test_dirs):
+                    continue
+                touched.add(path)
         if len(touched) <= self.broad_diff_limit:
             return []
         sample = ", ".join(sorted(touched)[:5])
@@ -593,10 +666,19 @@ class PstackCritic:
         workspace = Path(workspace)
         findings, py_test_files = self._scan_tests(workspace)
         if contract is not None:
-            findings.extend(self._check_contract(workspace, contract))
+            integrity_findings = self._check_contract(workspace, contract)
+            unsafe = _unsafe_git_workspace(workspace)
+            if unsafe is not None and not any(Path(f.location).name == ".git" for f in integrity_findings):
+                integrity_findings.append(unsafe)
         else:
-            findings.extend(self._check_test_integrity(workspace))
-        findings.extend(self._check_broad_diff(workspace))
+            integrity_findings = self._check_test_integrity(workspace)
+        findings.extend(integrity_findings)
+        git_tampered = any(
+            Path(f.location).name in {".git", ".gitattributes", ".gitmodules"}
+            for f in integrity_findings
+        )
+        if not git_tampered:
+            findings.extend(self._check_broad_diff(workspace))
         exit_code, stdout, stderr, total, failed, skipped, counts_note, counts_source = (
             self._run_tests(workspace)
         )
@@ -761,8 +843,22 @@ class PstackCritic:
 
 #: Path components that shadow or hook the runner when the workspace is `sys.path[0]`.
 SHADOW_NAMES: tuple[str, ...] = (
-    "pytest", "_pytest", "pluggy", "py", "unittest", "xml", "sitecustomize", "usercustomize",
+    "pytest", "_pytest", "pluggy", "py", "unittest", "xml",
+    "sitecustomize", "usercustomize",
+    "iniconfig", "packaging", "tomllib", "configparser", "importlib",
 )
+
+
+def _porcelain_paths(line: str) -> list[str]:
+    """Extract workspace-relative path(s) from a `git status --porcelain` line."""
+    if len(line) < 4:
+        return []
+    status = line[:2]
+    rest = line[3:].strip()
+    if ("R" in status or "C" in status) and " -> " in rest:
+        old, new = rest.split(" -> ", 1)
+        return [old.strip().strip('"'), new.strip().strip('"')]
+    return [rest.strip('"')]
 
 DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "conftest.py",
@@ -773,6 +869,8 @@ DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "pyproject.toml",
     "setup.py",
     ".coveragerc",
+    ".gitattributes",
+    ".gitmodules",
     # modules that shadow or hook the runner inside the workspace
     "pytest.py",
     "_pytest.py",
@@ -782,6 +880,108 @@ DEFAULT_GATE_INFRA: tuple[str, ...] = (
     "sitecustomize.py",
     "usercustomize.py",
 )
+
+_DANGEROUS_GIT_CONFIG_RE = re.compile(
+    r"(?im)^\s*(?:\[\s*(?:filter|diff)\b|(?:fsmonitor|hookspath|sshcommand|gitproxy|askpass)\s*=)"
+)
+_DANGEROUS_GIT_ATTR_RE = re.compile(r"(?m)^[^#\n]*\b(?:filter|diff)\s*=")
+
+
+def _git_contract_digest(root: Path) -> str | None:
+    import hashlib
+
+    dot_git = root / ".git"
+    if dot_git.is_symlink():
+        return hashlib.sha256(f"symlink:{os.readlink(dot_git)}".encode("utf-8")).hexdigest()
+    if dot_git.is_file():
+        try:
+            return hashlib.sha256(b"file:" + dot_git.read_bytes()).hexdigest()
+        except OSError:
+            return "unreadable"
+    if dot_git.is_dir():
+        digest = hashlib.sha256(b"dir:")
+        for sub in ("config", "info/attributes"):
+            target = dot_git / sub
+            if target.is_symlink():
+                digest.update(f"symlink:{sub}:{os.readlink(target)}".encode("utf-8"))
+            elif target.is_file():
+                try:
+                    digest.update(sub.encode("utf-8") + b"\0" + target.read_bytes())
+                except OSError:
+                    pass
+        return digest.hexdigest()
+    return None
+
+
+def _unsafe_git_workspace(workspace: Path) -> Finding | None:
+    """Refuse host-side git when `.git` or gitattributes could execute trial commands."""
+    dot_git = workspace / ".git"
+    if not dot_git.exists() and not dot_git.is_symlink():
+        return None
+    if dot_git.is_symlink():
+        return Finding(
+            check="tests_infra_modified",
+            severity="error",
+            message="trial replaced .git with a symlink — refusing to run host git",
+            location=str(dot_git),
+        )
+    configs: list[Path] = []
+    attrs: list[Path] = [workspace / ".gitattributes"]
+    if dot_git.is_file():
+        try:
+            pointer = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return Finding(
+                check="tests_infra_modified",
+                severity="error",
+                message="unreadable .git worktree pointer — refusing to run host git",
+                location=str(dot_git),
+            )
+        if not pointer.startswith("gitdir:"):
+            return Finding(
+                check="tests_infra_modified",
+                severity="error",
+                message="invalid .git worktree pointer — refusing to run host git",
+                location=str(dot_git),
+            )
+        raw = pointer.partition(":")[2].strip()
+        target = Path(raw)
+        target = (workspace / target).resolve() if not target.is_absolute() else target.resolve()
+        ws_resolved = workspace.resolve()
+        if (
+            not target.is_dir()
+            or target.is_relative_to(ws_resolved)
+            or target.parent.name != "worktrees"
+        ):
+            return Finding(
+                check="tests_infra_modified",
+                severity="error",
+                message="redirected .git worktree pointer — refusing to run host git",
+                location=str(dot_git),
+            )
+        configs.extend([target / "config", target.parent.parent / "config"])
+        attrs.extend([target / "info" / "attributes", target.parent.parent / "info" / "attributes"])
+    elif dot_git.is_dir():
+        configs.append(dot_git / "config")
+        attrs.append(dot_git / "info" / "attributes")
+
+    for cfg in configs:
+        if cfg.is_symlink() or (cfg.is_file() and _DANGEROUS_GIT_CONFIG_RE.search(cfg.read_text(encoding="utf-8", errors="replace"))):
+            return Finding(
+                check="tests_infra_modified",
+                severity="error",
+                message="unsafe git config directive in workspace — refusing to run host git",
+                location=str(dot_git),
+            )
+    for attr in attrs:
+        if attr.is_symlink() or (attr.is_file() and _DANGEROUS_GIT_ATTR_RE.search(attr.read_text(encoding="utf-8", errors="replace"))):
+            return Finding(
+                check="tests_infra_modified",
+                severity="error",
+                message="unsafe git attributes filter/diff in workspace — refusing to run host git",
+                location=str(attr),
+            )
+    return None
 
 
 def _pytest_like(command: Sequence[str]) -> bool:
@@ -843,8 +1043,18 @@ def _junit_counts(
     produces no matching summary line — and a silenced stdout cannot corroborate
     anything, so both stay fail-closed.
     """
+    if path.is_symlink() or not path.is_file():
+        return None
     try:
-        tree = xml.parse(path)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None
+            tree = xml.parse(fh)
     except (OSError, xml.ParseError):
         return None
     root = tree.getroot()
@@ -879,8 +1089,12 @@ def _junit_counts(
     return (total, failed, skipped), False
 
 
-def _gate_env() -> dict[str, str]:
-    """Environment for the gate run.
+def _gate_env(
+    policy: IsolationPolicy | None = None,
+    *,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Scrubbed environment for the gate run.
 
     Plugin autoloading is off by default: a trial can drop a
     ``*.dist-info/entry_points.txt`` declaring a ``pytest11`` plugin and have it
@@ -888,11 +1102,24 @@ def _gate_env() -> dict[str, str]:
     (external audit, Oct 2026). A repository that genuinely needs an installed
     plugin autoloaded can set ``DACODE_GATE_PLUGIN_AUTOLOAD=1``.
     """
-    import os
-
-    env = dict(os.environ)
+    effective = (
+        policy
+        if (policy is not None and policy.enabled)
+        else IsolationPolicy(
+            enabled=False,
+            network=bool(policy.network) if policy is not None else False,
+            env_allow=(
+                "HOME",
+                "VIRTUAL_ENV",
+                *(policy.env_allow if policy is not None else ()),
+            ),
+        )
+    )
+    env = allowed_env(effective)
     if os.environ.get("DACODE_GATE_PLUGIN_AUTOLOAD", "").lower() not in {"1", "true", "yes"}:
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    if extra:
+        env.update(extra)
     return env
 
 
@@ -949,7 +1176,12 @@ def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
     return total, failed, skipped
 
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_ANSI_RE = re.compile(
+    r"(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f])[^\n]*?(?:\x07|\x1b\\|\x9c)"
+    r"|(?:\x1b\[|\x9b)[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]"
+    r"|\x1b[\x20-\x2f]*[\x30-\x7e]"
+    r"|[\x00-\x08\x0b-\x1f\x7f-\x9f]"
+)
 
 
 def _strip_ansi(text: str) -> str:

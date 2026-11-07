@@ -1,8 +1,8 @@
 # Security model
 
 DaCode runs model-written code. This file states what the rig guarantees, what it
-does not, and what to do about it. It is written from an external audit
-(Gemini 4 Argon via `agy`, Oct 2026) plus the fixes applied in response, and it
+does not, and what to do about it. It is written from external audits
+(Gemini 4 Argon via `agy`, Oct & Nov 2026) plus the fixes applied in response, and it
 deliberately keeps the open items visible.
 
 ## Threat model
@@ -12,23 +12,25 @@ hostile. A *repository* can also be hostile: `dacode --repo <path>` reads its
 `.env` and its tests.
 
 The host secrets worth protecting: `~/.ssh`, `~/.hermes/.env`, `~/.pi/agent/auth.json`,
-provider API keys in the environment, and anything reachable over the network.
+`~/.gemini` credentials (`oauth_creds.json`, `google_accounts.json`, `antigravity/mcp_config.json`),
+provider API keys in the environment, personal vaults under `~/Documents`, and anything reachable over the network.
 
 ## Guaranteed today
 
 | Area | Guarantee | Enforced by |
 |---|---|---|
 | Gate verdict | exit 0 **and** `failed == 0` **and** a non-zero test count | `PstackCritic.review_workspace` |
-| Gate counts | for a pytest command the numbers come from a JUnit report written outside the workspace and parsed on the host; the counts are taken from the report's own `<testcase>` elements **and** cross-checked against the totals it declares, stdout must agree, and a green run with no usable report fails | `_run_once`, `_junit_counts`, `counts_disagree`, `counts_unavailable` |
-| Test integrity | a trial may not change, add or delete `test_*.py`, `conftest*.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `pytest.py`, `sitecustomize.py`, `usercustomize.py`, packaging metadata (`*.dist-info`, `entry_points.txt`), any file in a dedicated test directory, or any path with a shadowing component — enforced by the pre-trial snapshot and, without one, by the git-status fallback which also checks test-directory membership | `tests_modified`, `tests_infra_modified` |
-| Integrity vs. a commit | the suite is hashed before the trial runs, so an edit, a removal or a new file fails even if the trial commits it or replaces `.git` | `snapshot_contract()` + `_check_contract()` |
-| Suite size | the collected count may not fall below the baseline (dynamic, or the static `def test_*` count when collection fails), skips may not rise | `tests_lost`, `tests_skipped` |
+| Gate counts | for a pytest command the numbers come from a JUnit report written outside the workspace (`--junitxml` directly or via `PYTEST_ADDOPTS` for `bash -c` scripts) and parsed on the host with `O_NOFOLLOW` + `stat.S_ISREG` (rejecting symlinks and non-regular files); counts are taken from `<testcase>` elements **and** cross-checked against declared totals, stdout must agree, and a green run with no usable report fails | `_run_once`, `_junit_counts`, `counts_disagree`, `counts_unavailable` |
+| Test integrity | a trial may not change, add, rename or delete `test_*.py`, `*_test.py`, `conftest*.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`, `setup.py`, `pyproject.toml`, `.coveragerc`, `.gitattributes`, `.gitmodules`, `.pth` files, compiled `.so`/`.pyd` shadows, `pytest.py`, startup dependencies (`iniconfig`, `packaging`, `tomllib`, `configparser`, `importlib`), `sitecustomize.py`, `usercustomize.py`, packaging metadata (`*.dist-info`, `entry_points.txt`), any file or nested subdirectory in a dedicated test directory, or any path with a shadowing component | `tests_modified`, `tests_infra_modified` |
+| Integrity vs. a commit | the suite and `.git` pointer/config state are hashed before the trial runs, so an edit, a removal, a rename or a `.git` swap fails even if the trial commits it | `snapshot_contract()` + `_check_contract()` + `_git_contract_digest()` |
+| Suite size | the collected count may not fall below the baseline (dynamic, or the static `def test_*` count across `test_*.py` and `*_test.py` when collection fails), skips may not rise | `tests_lost`, `tests_skipped` |
 | Gate authority | only gate-passing variants are candidates for composition; a judge may pick among passes, never over one | `compose()`, `_variant_score()` |
-| Gate network | with isolation on, the gate never gets a network namespace or provider keys | separate `gate_isolation` policy |
-| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, private `/proc`, `/dev`, `/tmp`, `/run`, `/var/tmp`, workspace-only writes plus the gate's own report directory, allow-listed environment; a `protected_paths` entry stays read-only even under a writable parent (later mounts shadow earlier ones, so the re-bind is emitted last) | `dacode/sandbox/bwrap.py` |
-| Credentials in the sandbox | `$HOME`, its ancestors and credential paths under it are never bound; `<repo>/.env` and `~/.pi/agent/auth.json` are masked with `/dev/null`; plugin autoloading is off | `_bind_candidates`, `hidden_files`, `_gate_env` |
-| Secrets in state | the state directory is created `0700` on first use (not inherited from the umask) and the runlog is `0700` on every write; events and lesson text are redacted (`sk-`, `gsk_`, `AIza`, `hf_`, JWTs, `Bearer`/`Basic`, and the values of known key variables) before they are written | `dacode/redact.py`, `runlog.record`, `_build_lesson` |
-| Host-side git | `checkpoint()` refuses a worktree whose `.git` is not a pointer file and runs git with hooks and fsmonitor disabled | `GitSandbox.checkpoint` |
+| Gate network & child env | with isolation on, the gate never gets a network namespace or provider keys; all executor and gate `subprocess.run` calls scrub host secrets (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `LD_PRELOAD`, …) via `allowed_env()` even under `--isolate none` | `gate_isolation`, `allowed_env`, `_gate_env` |
+| Sandbox (`--isolate bwrap`) | read-only host, empty home tmpfs, private `/proc`, `/dev`, `/tmp`, `/run`, `/var/tmp`, workspace-only writes (`<workspace>/.git` re-bound read-only) plus the gate's own report directory, allow-listed environment; trial-writable workspace paths/symlinks/`pyvenv.cfg` never add host mounts; `protected_paths` entries are re-bound read-only after writable parents | `dacode/sandbox/bwrap.py` |
+| Credentials in the sandbox | `$HOME`, its ancestors, vaults (`~/Documents`) and credential/state paths under `$HOME` are never bound; `<repo>/.env` (allow-listed strictly to `*_API_KEY`), `~/.pi/agent/auth.json` and `~/.gemini` auth/MCP files are masked; plugin autoloading is off inside and outside `bwrap` | `_bind_candidates`, `ENV_ALLOW_LIST`, `hidden_files`, `_gate_env` |
+| Secrets in state & prompts | state directories are `0700` when created and `runlog.jsonl`, `memory.db` (plus `-wal`/`-shm`) and `embeddings.db` are enforced `0600`; runlog events, vault lessons/hits, and trial `ProbeResult` / `_failure_digest()` outputs are redacted (PEM keys, `sk-`, Stripe, `gsk_`, `AIza`, `hf_`, GitHub/GitLab/PyPI/npm, `AKIA`/`ASIA`, JWTs, `Bearer`/`Basic`, and secret env values) before persistence or LLM proposal | `dacode/redact.py`, `runlog.record`, `HarnessOptimizer.probe`, `_build_lesson` |
+| Host-side git | `_verify_worktree_pointer()` guards `checkpoint()`, `rollback()` and `head_sha()`, and `_unsafe_git_workspace()` blocks host `git status` on redirected `.git` pointers or filter/fsmonitor directives; git runs with hooks and fsmonitor disabled | `GitSandbox`, `PstackCritic` |
+| Terminal & MCP bounds | ECMA-48 CSI/OSC/DCS/APC/PM and 8-bit C1 control sequences are stripped across variant labels, `dacode watch`, and CLI output; `dacode mcp` caps JSON-RPC lines at 1 MiB (`MAX_REQUEST_CHARS`) | `sanitize_terminal`, `MemoryServer.serve` |
 | Fail closed | no bwrap, or namespaces unavailable → `RuntimeError`; an unsandboxable executor returns 126, the gate 125 | `available()` probe, orchestrator, critic |
 | Concurrency | worktree creation, checkpoint and removal are serialised; the JSONL append and the SQLite mirror are locked | `_sandbox_lock`, `_WRITE_LOCK`, `_INGEST_LOCK` |
 | Cleanup | `sandbox clean` never touches the main checkout, and a superseded round's best worktree is removed | `dacode/cli.py`, `_cleanup_losers` |
@@ -46,12 +48,13 @@ provider API keys in the environment, and anything reachable over the network.
    guards still applying; treat their results as unproven and read the diff.
 2. **`/sys` stays mounted read-only.** No secrets live there, but host topology,
    device names and some CPU information are visible to a trial.
-3. **The rest of `~/.pi` is bound writable** into the executor sandbox (pi 1.4
-   needs a lock file next to its settings; `agent/auth.json` is masked, and the
-   agent's binary directory is re-bound read-only on top of the writable mount,
-   so a trial cannot replace the executable the host runs). Agent config, logs
-   and settings remain writable by the trial; treat what a future pi run loads
-   from `~/.pi` as possibly influenced by a trial.
+3. **Runtime state subdirectories of `~/.pi` and `~/.gemini` remain writable** into
+   their respective executor sandboxes (agent CLIs need lock and session state;
+   `~/.pi/agent/auth.json` and `~/.gemini` auth/MCP configs are masked, and
+   binaries, hooks, skills, plugins, rules and settings are re-bound read-only on
+   top of the writable mount via `protected_paths`, so a trial cannot replace
+   executables or plant persistent hooks). Logs and session files under those
+   directories remain writable by the trial.
 4. **`DACODE_ENV_TRUST=1` is a real escape hatch.** It restores the old behaviour of
    importing every key from a repository's `.env`. It prints a warning on stderr;
    never set it for a repository you do not own.
@@ -89,15 +92,16 @@ provider API keys in the environment, and anything reachable over the network.
    **scoped per project**: a run on repo X reads only
    `Projects/X/Lessons` plus the vault-wide `shared/Lessons` (rig-level
    lessons), with the project line derived from the repository name.
-   Scoped retrieval enforces three guards proven necessary by simulation:
-   symlinks inside a scope's folder are never followed (they could import
-   another project's lessons), semantic hits are filtered to the scope
-   *after* path resolution (so `Projects/A/../B/...` cannot cross lines by
-   normalising), and a scoped run's `ingest` refuses to write outside its
-   own project. `DACODE_VAULT` is deliberately **not** allow-listable
-   through a repository's `.env` — a repo that could redirect the vault
-   could plant its own lessons — so the pointer stays in the operator's
-   hands (`--vault`).
+   Scoped retrieval enforces four guards: leaf and intermediate directory
+   symlinks inside the vault are never followed by `VaultMemory` or
+   `VectorStore.index()` (`_is_safe_vault_file`), semantic hits are filtered to
+   the scope *after* path resolution and redacted even on stopword/symbol-only
+   queries, and a scoped run's `ingest` writes only into `Projects/<scope>`
+   (never `shared/` or outside the vault). `DACODE_VAULT` and `DACODE_EMBED_*`
+   (except `DACODE_EMBED_API_KEY`) are deliberately **not** allow-listable
+   through a repository's `.env` — a repo that could redirect the vault or swap
+   the embedding model could plant lessons or poison shared vector state — so
+   those settings stay in the operator's hands (`--vault`, shell environment).
 
 A sandbox hides `$HOME` by design, so a suite importing a **pip --user**
 package fails with `No module named X`. The gate turns that into a named

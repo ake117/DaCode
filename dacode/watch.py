@@ -19,6 +19,7 @@ import time
 import tty
 from pathlib import Path
 
+from .redact import sanitize_terminal
 from .runlog import current_path, default_path, load_events
 
 MAX_EVENTS = 5000  # render budget; a log beyond this outgrew the TUI
@@ -48,9 +49,10 @@ def _hhmmss(ts: float | None) -> str:
 
 
 def _short_task(task: str | None, width: int = 52) -> str:
-    if not task:
+    cleaned = sanitize_terminal(task).strip()
+    if not cleaned:
         return "(untitled)"
-    return task if len(task) <= width else task[: width - 1] + "…"
+    return cleaned if len(cleaned) <= width else cleaned[: width - 1] + "…"
 
 
 def render(events: list[dict], history: int = 10,
@@ -65,8 +67,9 @@ def render(events: list[dict], history: int = 10,
     probes = sum(1 for e in events if e.get("type") == "probe")
     rate = f"{(100 * passed / total_runs):.0f}%" if total_runs else "—"
 
+    safe_log = sanitize_terminal(log_name or "runlog.jsonl").strip() or "runlog.jsonl"
     lines: list[str] = []
-    lines.append(f"DaCode watch · {log_name or 'runlog.jsonl'} · "
+    lines.append(f"DaCode watch · {safe_log} · "
                  f"{total_runs} runs · {passed} passed ({rate}) · "
                  f"{probes} probes · [q] quit")
     lines.append("─" * WIDTH)
@@ -81,18 +84,26 @@ def render(events: list[dict], history: int = 10,
                 findings = event.get("findings") or []
                 ok = event.get("exit_code") == 0 and not findings
                 mark = "✓" if ok else "✗"
-                detail = ", ".join(map(str, findings)) if findings else "clean"
+                detail = (
+                    ", ".join(sanitize_terminal(f) for f in findings)
+                    if findings
+                    else "clean"
+                )
                 total = event.get("tests_total")
                 count = (f"tests {event.get('tests_passed')}/{total}"
                          if total is not None else "tests ?")
+                vid = sanitize_terminal(event.get("variant_id", "?"))
+                lbl = sanitize_terminal(event.get("label") or "")
                 lines.append(
-                    f"   {mark} {event.get('variant_id', '?'):<4} "
-                    f"{(event.get('label') or ''):<26} {count:<8} "
+                    f"   {mark} {vid:<4} "
+                    f"{lbl:<26} {count:<8} "
                     f"exit {event.get('exit_code')} "
                     f"{event.get('elapsed_s', 0):.1f}s  {detail}")
             elif event.get("type") == "compose":
-                lines.append(f"   · compose  chooser={event.get('chooser')} "
-                             f"picked {event.get('chosen_id')}")
+                chooser = sanitize_terminal(event.get("chooser"))
+                chosen = sanitize_terminal(event.get("chosen_id"))
+                lines.append(f"   · compose  chooser={chooser} "
+                             f"picked {chosen}")
         lines.append("─" * WIDTH)
 
     for block in reversed(runs[-history:]):
@@ -103,10 +114,11 @@ def render(events: list[dict], history: int = 10,
             mark = "⚑"
         else:
             mark = "✗"
-        best = done.get("best_id") or "—"
-        label = next((e.get("label") for e in block
-                      if e.get("type") == "probe" and e.get("variant_id") == best
-                      and e.get("label")), "")
+        best_raw = done.get("best_id")
+        best = sanitize_terminal(best_raw) if best_raw else "—"
+        label = sanitize_terminal(next((e.get("label") for e in block
+                      if e.get("type") == "probe" and e.get("variant_id") == best_raw
+                      and e.get("label")), ""))
         score = done.get("best_score")
         score_s = f" (score {score:g})" if isinstance(score, (int, float)) else ""
         flag = "  needs-human" if done.get("needs_human_review") else ""

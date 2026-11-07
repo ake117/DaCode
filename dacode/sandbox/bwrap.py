@@ -25,6 +25,7 @@ CLI says so, rather than silently running unsandboxed.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -259,7 +260,12 @@ def wrap_command(
             argv += ["--ro-bind", str(target.parent), str(target.parent)]
 
     for path in policy.read_only_paths:
-        for candidate in _bind_candidates(Path(path).expanduser(), home=home_path):
+        for candidate in _bind_candidates(
+            Path(path).expanduser(),
+            home=home_path,
+            workspace=workspace_path,
+            trust_workspace=read_only_workspace,
+        ):
             argv += ["--ro-bind", str(candidate), str(candidate)]
 
     # Writable binds come before the masks: a hidden file inside a writable
@@ -279,8 +285,12 @@ def wrap_command(
     # Protected re-binds come after the writable binds (including workspace_path)
     # so they shadow them: a read-only mount on a child of a writable parent is
     # the only way the child actually stays read-only (later mounts win).
-    for extra in policy.protected_paths:
-        target = Path(extra).expanduser().resolve()
+    protected_targets = [Path(extra).expanduser().resolve() for extra in policy.protected_paths]
+    ws_dot_git = workspace_path / ".git"
+    if not read_only_workspace and not ws_dot_git.is_symlink() and ws_dot_git.exists():
+        if ws_dot_git not in protected_targets:
+            protected_targets.append(ws_dot_git)
+    for target in protected_targets:
         if target.exists():
             argv += ["--ro-bind", str(target), str(target)]
 
@@ -312,67 +322,144 @@ def wrap_command(
     return argv
 
 
-#: Credentials under $HOME that are never bound into a sandbox, whatever a policy
-#: asks for. Narrow on purpose: interpreters and venvs often live under
-#: ``~/.hermes/tools`` or ``~/.local``, so a whole-directory deny for those would
-#: make the sandbox unable to start. ``.pi`` is absent because the agent executor
-#: has to authenticate — that is a known open item in SECURITY.md.
+#: Credentials, state stores, vaults, and personal directories under $HOME that
+#: are never bound into a sandbox through read_only_paths / exposes_home.
 HOME_SECRET_DIRS: tuple[str, ...] = (
     ".ssh", ".gnupg", ".aws", ".kube", ".docker", ".password-store", ".mozilla",
+    ".thunderbird", ".config", ".cache", ".pki", ".azure", ".gsutil", ".subversion",
+    ".1password", ".bitwarden", ".op", ".vault", ".terraform.d", ".pulumi",
+    "Documents", "Downloads", "Desktop",
 )
 HOME_SECRET_FILES: tuple[str, ...] = (
-    ".git-credentials", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".my.cnf",
+    ".env", ".git-credentials", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".my.cnf",
+    ".boto", ".s3cfg", ".rclone.conf", ".vault-token",
+    ".bash_history", ".zsh_history", ".sh_history", ".python_history",
+    ".node_repl_history", ".lesshst", ".viminfo", ".wget-hsts",
 )
 HOME_SECRET_RELATIVE: tuple[str, ...] = (
     ".hermes/.env", ".hermes/config.yaml", ".hermes/google_token.json",
     ".config/gcloud", ".config/gh", ".docker/config.json",
+    ".pi/agent/auth.json",
+    ".gemini/antigravity/mcp_config.json", ".gemini/oauth_creds.json", ".gemini/google_accounts.json",
+    ".local/state", ".local/share/keyrings", ".local/share/gnupg", ".local/share/dacode",
+    ".cargo/credentials", ".cargo/credentials.toml", ".gem/credentials", ".composer/auth.json",
+)
+#: Top-level $HOME directories where only specific binary/runtime subtrees may be bound read-only.
+HOME_SCOPED_ALLOW: dict[str, tuple[str, ...]] = {
+    ".pi": (".pi/bin", ".pi/agent/bin"),
+    ".gemini": (".gemini/bin", ".gemini/antigravity/bin"),
+    ".hermes": (".hermes/tools", ".hermes/venvs"),
+}
+#: Known interpreter/toolchain prefixes under $HOME allowed when resolving a
+#: read-only baseline venv's base prefix out of a workspace.
+HOME_RUNTIME_PREFIXES: tuple[str, ...] = (
+    ".pyenv", ".asdf", ".nvm", ".fnm", ".volta", ".bun", ".rye", ".uv",
+    ".poetry", ".virtualenvs", ".venvs", ".conda", "miniconda3", "miniforge3",
+    "mambaforge", ".rustup", ".cargo/bin", ".hermes/tools", ".hermes/venvs",
+    ".local/bin", ".local/lib", ".local/lib64", ".local/pipx",
+    ".local/share/uv", ".local/share/mise", ".local/share/fnm",
+    ".local/share/pyenv", ".local/share/virtualenvs", ".local/share/pipx",
 )
 
 
+def _in_workspace(path: Path, workspace: str | Path | None) -> bool:
+    """Does ``path`` pass through ``workspace`` before following leaf symlinks?"""
+    if workspace is None:
+        return False
+    try:
+        ws_real = Path(workspace).expanduser().resolve()
+        p_abs = Path(os.path.abspath(os.path.expanduser(str(path))))
+    except OSError:
+        return False
+    for candidate in (p_abs, *p_abs.parents):
+        try:
+            if candidate.resolve() == ws_real:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _is_allowed_workspace_target(path: Path, home: Path) -> bool:
+    """May a symlink or pyvenv.cfg inside a read-only workspace bind ``path``?"""
+    if exposes_home(path, home=home):
+        return False
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return False
+    if resolved == Path("/run") or resolved.is_relative_to(Path("/run")):
+        return False
+    try:
+        rel = resolved.relative_to(home).as_posix()
+    except ValueError:
+        return True
+    return any(rel == prefix or rel.startswith(prefix + "/") for prefix in HOME_RUNTIME_PREFIXES)
+
+
 def _is_home_secret(path: Path, home: Path) -> bool:
-    """Is this a credential path under $HOME (or a directory holding some)?"""
+    """Is this a credential, state, or personal path under $HOME?"""
     try:
         relative = path.resolve().relative_to(home)
     except (OSError, ValueError):
         return False
     if not relative.parts:
         return False
-    if relative.parts[0] in HOME_SECRET_DIRS or relative.name in HOME_SECRET_FILES:
+    name = relative.name
+    if name in HOME_SECRET_FILES or name.startswith(".env."):
         return True
-    text = str(relative)
+    top = relative.parts[0]
+    text = relative.as_posix()
+    if top in HOME_SCOPED_ALLOW:
+        allowed = HOME_SCOPED_ALLOW[top]
+        return not any(text == entry or text.startswith(entry + "/") for entry in allowed)
+    if top in HOME_SECRET_DIRS:
+        return True
     return any(text == entry or text.startswith(entry + "/") for entry in HOME_SECRET_RELATIVE)
 
 
-def _bind_candidates(path: Path, *, home: Path | None = None) -> list[Path]:
+def _bind_candidates(
+    path: Path,
+    *,
+    home: Path | None = None,
+    workspace: str | Path | None = None,
+    trust_workspace: bool = False,
+) -> list[Path]:
     """A path plus what it really points at.
 
     A venv's ``bin/python`` is usually a symlink into the base interpreter, which
     may live under the home directory we just emptied — binding only the symlink
     leaves a dangling target and every command dies with
-    ``execvp …: No such file or directory``. Bind the target (and its prefix) too.
+    ``execvp …: No such file or directory``. Bind the target (and its prefix) too,
+    unless ``path`` originates inside an untrusted trial workspace.
     """
-    home_path = home or Path.home().resolve()
+    home_path = Path(home).expanduser().resolve() if home is not None else Path.home().resolve()
+    from_workspace = _in_workspace(path, workspace)
+    if from_workspace and not trust_workspace:
+        return []
     out: list[Path] = []
 
-    for candidate in (path,):
-        if candidate.exists() and not exposes_home(candidate, home=home_path):
-            out.append(candidate)
+    if not from_workspace:
+        for candidate in (path,):
+            if candidate.exists() and not exposes_home(candidate, home=home_path):
+                out.append(candidate)
     try:
         real = path.resolve()
     except OSError:
         real = None
     if real is not None and real != path:
         if real.exists() and not exposes_home(real, home=home_path):
-            out.append(real)
+            if not from_workspace or _is_allowed_workspace_target(real, home_path):
+                out.append(real)
         prefix = real.parent.parent  # <prefix>/bin/python → <prefix>
         if prefix.exists() and not exposes_home(prefix, home=home_path):
             # Never bind a top-level directory of $HOME (~/.local, ~/.hermes) just
             # because a symlink resolved inside it: that exposes the state store and
             # anything else kept there. Bind the immediate parent instead.
-            if prefix.parent == home_path:
-                out.append(real.parent)
-            else:
-                out.append(prefix)
+            target = real.parent if prefix.parent == home_path else prefix
+            if not exposes_home(target, home=home_path):
+                if not from_workspace or _is_allowed_workspace_target(target, home_path):
+                    out.append(target)
     return list(dict.fromkeys(out))
 
 
@@ -386,36 +473,76 @@ def describe(policy: IsolationPolicy) -> str:
     return " · ".join(bits)
 
 
-def interpreter_binds(command: Iterable[str]) -> tuple[Path, ...]:
+def interpreter_binds(
+    command: Iterable[str],
+    *,
+    workspace: str | Path | None = None,
+    home: str | Path | None = None,
+    trust_workspace: bool = False,
+) -> tuple[Path, ...]:
     """Everything the sandbox needs to start the test interpreter.
 
     A venv under the home directory disappears with the home tmpfs, and its
     ``bin/python`` is a symlink into a base install that may also live under home.
     Bind, in order: the interpreter itself, its venv root (detected by
     ``pyvenv.cfg``), the base prefix named in that file, and the resolved target.
+    Paths inside an untrusted trial workspace never add host mounts.
     """
     python = _python_token(command)
     if python is None or not python.is_absolute():
         return ()
-    candidates: list[Path] = [python, python.parent]
+    home_path = Path(home).expanduser().resolve() if home is not None else Path.home().resolve()
+    from_workspace = _in_workspace(python, workspace)
+    if from_workspace and not trust_workspace:
+        return ()
+    candidates: list[Path] = [] if from_workspace else [python, python.parent]
     venv_root = python.parent.parent
     cfg = venv_root / "pyvenv.cfg"
-    if cfg.is_file():
-        candidates.append(venv_root)
+    if cfg.is_file() and not cfg.is_symlink():
+        if not from_workspace:
+            candidates.append(venv_root)
         try:
             for line in cfg.read_text(errors="ignore").splitlines():
-                if line.lower().startswith("home"):
-                    base_bin = Path(line.split("=", 1)[1].strip())
+                key, sep, value = line.partition("=")
+                if sep and key.strip().lower() == "home":
+                    base_bin = Path(value.strip())
+                    if not base_bin.is_absolute():
+                        continue
                     candidates.append(base_bin)
-                    candidates.append(base_bin.parent)
+                    base_prefix = base_bin.parent
+                    if base_prefix != home_path and base_prefix.parent != home_path:
+                        candidates.append(base_prefix)
+                    elif base_prefix == home_path / ".local":
+                        candidates.extend((home_path / ".local" / "lib", home_path / ".local" / "lib64"))
         except OSError:
             pass
-    return tuple(dict.fromkeys(p for p in candidates if p.exists()))
+    out: list[Path] = []
+    for p in candidates:
+        if not p.exists() or exposes_home(p, home=home_path):
+            continue
+        if from_workspace and not _is_allowed_workspace_target(p, home_path):
+            continue
+        if p not in out:
+            out.append(p)
+    return tuple(out)
+
+
+def _iter_command_tokens(command: Iterable[str]) -> list[str]:
+    items = [str(t) for t in command]
+    if (
+        len(items) >= 3
+        and Path(items[0]).name.lower() in {"bash", "bash.exe", "sh"}
+        and items[1] in {"-c", "-lc"}
+    ):
+        try:
+            return shlex.split(items[2])
+        except ValueError:
+            return items[2].split()
+    return items
 
 
 def _python_token(command: Iterable[str]) -> Path | None:
-    for token in command:
-        text = str(token)
+    for text in _iter_command_tokens(command):
         if text.endswith("python") or text.endswith("python3") or "/python" in text:
             return Path(text)
     return None
@@ -423,7 +550,7 @@ def _python_token(command: Iterable[str]) -> Path | None:
 
 def interpreter_root(command: Iterable[str]) -> Path | None:
     """The directory holding the interpreter in a test command, if it is an absolute path."""
-    for token in command:
+    for token in _iter_command_tokens(command):
         if token.endswith("python") or "/python" in token or token.endswith("python3"):
             path = Path(token)
             if path.is_absolute():

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dacode.executor.base import ExecResult
-from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, wrap_command
+from dacode.sandbox.bwrap import IsolationPolicy, IsolationUnavailable, allowed_env, wrap_command
 
 if TYPE_CHECKING:
     from dacode.harness.models import HarnessVariant
@@ -43,12 +43,26 @@ class ScriptExecutor:
         if self.isolation is not None and self.isolation.enabled:
             # Not a login shell: inside bwrap /etc/profile would run against an
             # empty $HOME and clobber the allow-listed PATH (audit L2).
-            base = ["bash", "-c", command] if use_shell else shlex.split(command)
+            if use_shell:
+                base = ["bash", "-c", command]
+            elif isinstance(command, (list, tuple)):
+                base = [str(part) for part in command]
+            else:
+                base = shlex.split(command)
             try:
                 argv = wrap_command(base, workspace=workspace, policy=self.isolation)
                 use_shell = False
             except IsolationUnavailable as exc:
                 return ExecResult(exit_code=126, stderr=f"isolation unavailable: {exc}", command=str(command))
+            child_env = allowed_env(self.isolation)
+        else:
+            child_env = allowed_env(
+                IsolationPolicy(
+                    enabled=False,
+                    network=True if self.isolation is None else self.isolation.network,
+                    env_allow=("HOME", *(self.isolation.env_allow if self.isolation else ())),
+                )
+            )
         try:
             proc = subprocess.run(
                 argv,
@@ -57,6 +71,7 @@ class ScriptExecutor:
                 text=True,
                 timeout=self.timeout,
                 shell=use_shell,
+                env=child_env,
             )
         except subprocess.TimeoutExpired as exc:
             return ExecResult(

@@ -13,8 +13,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from dacode.config import DaCodeConfig
 from dacode.orchestrator import DaCodeRig
+from dacode.sandbox.bwrap import available
+
+pytestmark = pytest.mark.skipif(not available(), reason="bubblewrap unavailable")
 
 ROGUE = ("bash", "-c", "python3 -c \"import fakepkg\"")
 GHOST = ("bash", "-c", "python3 -c \"import module_that_nowhere_exists\"")

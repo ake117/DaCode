@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from unittest import mock
+
 import pytest
 
 from dacode.discipline.critic import PstackCritic
@@ -26,14 +28,15 @@ from dacode.sandbox.bwrap import (
     wrap_command,
 )
 
-HAS_BWRAP = shutil.which("bwrap") is not None
-needs_bwrap = pytest.mark.skipif(not HAS_BWRAP, reason="bubblewrap not installed")
+HAS_BWRAP = bwrap_mod.available()
+needs_bwrap = pytest.mark.skipif(not HAS_BWRAP, reason="bubblewrap unavailable")
 
 
 def _argv(**kwargs) -> list[str]:
     policy = kwargs.pop("policy", IsolationPolicy(enabled=True))
-    return wrap_command(kwargs.pop("command", ["bash", "-lc", "true"]),
-                        workspace=kwargs.pop("workspace", Path.cwd()), policy=policy, **kwargs)
+    with mock.patch.object(bwrap_mod, "available", return_value=True):
+        return wrap_command(kwargs.pop("command", ["bash", "-lc", "true"]),
+                            workspace=kwargs.pop("workspace", Path.cwd()), policy=policy, **kwargs)
 
 
 # --- argv contract ---------------------------------------------------------
@@ -293,7 +296,8 @@ def test_the_gate_never_gets_the_network_even_when_the_executor_does(rig_repo):
     from dacode.orchestrator import DaCodeRig
 
     cfg = DaCodeConfig(repo=rig_repo, isolate="bwrap", isolate_network=True)
-    rig = DaCodeRig(cfg)
+    with mock.patch("dacode.orchestrator.bwrap_available", return_value=True):
+        rig = DaCodeRig(cfg)
 
     assert rig.isolation is not None and rig.isolation.network is True
     assert rig.critic.isolation is not None
@@ -403,17 +407,18 @@ def test_a_protected_path_is_bound_after_the_writable_parent(tmp_path):
     bindir = home / ".pi" / "agent" / "bin"
     bindir.mkdir(parents=True)
     (tmp_path / "ws").mkdir()
-    argv = wrap_command(
-        ["bash", "-c", "true"],
-        workspace=tmp_path / "ws",
-        policy=IsolationPolicy(
-            enabled=True,
-            read_only_paths=(bindir,),
-            writable_paths=(home,),
-            protected_paths=(bindir,),
-        ),
-        home=home,
-    )
+    with mock.patch.object(bwrap_mod, "available", return_value=True):
+        argv = wrap_command(
+            ["bash", "-c", "true"],
+            workspace=tmp_path / "ws",
+            policy=IsolationPolicy(
+                enabled=True,
+                read_only_paths=(bindir,),
+                writable_paths=(home,),
+                protected_paths=(bindir,),
+            ),
+            home=home,
+        )
     ro_after = _bind_positions(argv, bindir)
     # bound read-only twice: once with the other read_only_paths, once last
     assert len(ro_after) == 2

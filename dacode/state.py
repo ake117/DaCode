@@ -100,6 +100,11 @@ def _connect() -> sqlite3.Connection | None:
             os.chmod(parent, 0o700)
         except OSError:
             pass
+    if str(target) != ":memory:" and not target.exists():
+        try:
+            os.close(os.open(target, os.O_RDWR | os.O_CREAT, 0o600))
+        except OSError:
+            pass
     con = sqlite3.connect(str(target), timeout=5.0)
     con.executescript(_SCHEMA)
     try:
@@ -107,6 +112,14 @@ def _connect() -> sqlite3.Connection | None:
         con.execute("PRAGMA journal_mode=WAL")
     except sqlite3.OperationalError:
         pass  # no FTS5 in this build — search() falls back to LIKE
+    if str(target) != ":memory:":
+        for suffix in ("", "-wal", "-shm"):
+            sidecar = Path(f"{target}{suffix}")
+            if sidecar.exists() and not sidecar.is_symlink():
+                try:
+                    os.chmod(sidecar, 0o600)
+                except OSError:
+                    pass
     return con
 
 
