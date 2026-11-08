@@ -153,10 +153,12 @@ default — see "Memory backends"), `DACODE_EMBED_BASE_URL`, `DACODE_EMBED_MODEL
 | `xai` | `XAI_API_KEY` | `grok-4` |
 | `zai` | `GLM_API_KEY` (Pi also accepts `ZAI_API_KEY`) | `glm-5.3-flash` |
 
-`zai` speaks the OpenAI-compatible shape at Z.ai's **coding endpoint** and is
-verified end to end (propose + executor). Splitting propose and executor across
-providers works: `--llm zai --executor-provider zai`, or mix families with
-`--fleet`.
+`zai` speaks the OpenAI-compatible shape at Z.ai's **standard pay-per-token
+API** and is verified end to end (propose + executor). A GLM Coding-Plan key
+works by pointing `ZAI_BASE_URL` at the plan's endpoint — licensed for specific
+z.ai packages only, so DaCode never ships it as a default. Splitting propose and
+executor across providers works: `--llm zai --executor-provider zai`, or mix
+families with `--fleet`.
 
 Keys resolve in order: an explicit `--api-key` / `api_key=` kwarg → the
 provider's env var, populated from the **target repo's** `.env` by
@@ -258,7 +260,7 @@ do not own.
 
 A worktree gives a trial a private branch, not a private machine. `--isolate bwrap`
 is the default (a host without bubblewrap fails closed; `--isolate none` opts out).
-puts it in namespaces (bubblewrap, no daemon, no root):
+It puts a trial in namespaces (bubblewrap, no daemon, no root):
 
 ```bash
 dacode run "<task>" --executor pi --isolate bwrap --isolate-network \
@@ -290,7 +292,7 @@ workspace succeeds, and the full test gate still runs to completion.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q -o addopts=
 ```
 
 The suite covers every layer plus the end-to-end rig. The harness/orchestrator
@@ -431,7 +433,7 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
 
 - [x] Layer 1 Vault Memory (keyword retrieval + ingestion)
 - [x] Layer 2 Harness² Optimizer (Propose–Probe–Compose)
-- [x] Layer 3 Executor (Pi + script + stub)
+- [x] Layer 3 Executor (Pi + agy + script)
 - [x] Layer 4 pstack Critic (static checks + real test gate)
 - [x] Layer 5 Git Sandbox (worktrees + checkpoints)
 - [x] CLI + end-to-end tests

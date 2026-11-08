@@ -22,7 +22,8 @@ code in this repository.
 `DaCodeRig.run_task` calls `VaultMemory.retrieve(task, limit=5)`. Each hit
 contributes `"<title>: <snippet>"` to `HarnessVariant.memory_snippets` on the
 seeded base variant. Retrieval is TF scoring over markdown notes — title matches
-weigh 3× body matches, Thai and Latin tokens both supported, stopword-filtered.
+weigh 3× body matches, Thai and Latin tokens both supported, stopword-filtered —
+optionally blended with a semantic backend (see README "Memory backends").
 
 ### 2. Experimentation Loop — Layers 2 & 5
 
@@ -106,12 +107,12 @@ commits within the trial; `rollback` hard-resets it. Losing trials are removed
 
 ## Extension points
 
-* **Semantic retrieval** — replace `VaultMemory._score` with an embedding
-  backend; the rest of the pipeline is agnostic.
+* **New memory backends** — add `available()` + `search()` under
+  `memory/backends/`; retrieval blends semantic hits with keyword TF.
 * **New executors** — implement `run(variant, workspace) -> ExecResult`.
 * **New checks** — add functions returning `Finding` to `discipline/checks.py`.
-* **Stronger isolation** — wrap `executor.run` in `bwrap`/docker without
-  changing the optimizer.
+* **Alternative isolation** — swap the bwrap wrapper in `sandbox/bwrap.py` for
+  docker or another backend; the optimizer does not care.
 
 ## Module dependency graph
 
