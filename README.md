@@ -15,7 +15,8 @@ so the next run starts smarter. No ground-truth labels required.
 [The 5-layer stack](#the-5-layer-stack) · [Install](#install) ·
 [Usage](#usage) · [Memory backends](#memory-backends) ·
 [How a run works](#how-a-run-works) · [Isolation](#isolation) ·
-[Tests](#tests) · [FAQ](#faq) · [Going further](#going-further) ·
+[Tests](#tests) · [What DaCode is for](#what-dacode-is-for-and-what-to-expect) ·
+[FAQ](#faq) · [Going further](#going-further) ·
 [Design principles](#design-principles) ·
 [Working on DaCode itself](#working-on-dacode-itself) ·
 [Status / roadmap](#status--roadmap)
@@ -301,6 +302,33 @@ Pi nor network — but they exercise **real** git worktrees and **real** pytest
 runs inside the critic.
 
 ---
+
+## What DaCode is for (and what to expect)
+
+DaCode shines when you want a coding agent to **land a change you can trust**:
+
+- **Feature work and refactors on a test-covered repo** — the gate refuses
+  weak tests and false greens, so a "passed" run means the real suite passed.
+- **Fleet attempts at a hard task** — several executor/model variants race in
+  isolated worktrees; a selector picks the winner instead of you retrying one
+  prompt and hoping.
+- **Accumulating know-how** — every winning run writes a scoped lesson back to
+  the vault, so the rig starts the next task on the same repo smarter.
+- **Coding-agent comparison** — the same task through Pi, `agy`, or a script
+  double, gated identically; useful for benchmarking agents, not vibes.
+
+Set expectations accordingly:
+
+- **It is not a security scanner or bug bounty tool.** A critic and real tests
+  catch regressions and weak tests as a *side effect* of landing changes — they
+  do not sweep a codebase for vulnerabilities. Reach for an audit tool for that.
+- **It does not read intent.** The gate judges artefacts (tests, diffs, exit
+  codes), so soft signals live in warnings (e.g. `broad_diff`), never in
+  pass/fail.
+- **Ground truth is the suite.** If the tests are wrong, DaCode is confidently
+  wrong; garbage-in gates are the rig's hard limit.
+- **Cost scales with rounds.** Each round runs real executor trials in real
+  sandboxes — cheap for scripts, real money for frontier models.
 
 ## FAQ
 
