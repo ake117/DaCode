@@ -305,7 +305,10 @@ class PstackCritic:
                 and xml_counts[0] > 0
                 and stdout_counts[0] > 0        # silence is not a disagreement
                 and not junit_shaped            # subTest totals count units, not elements
-                and xml_counts != stdout_counts
+                # JUnit counts a skipped/xfailed test in `tests`; pytest's summary
+                # line does not. Compare the outcomes both readings agree on.
+                and (xml_counts[0] - xml_counts[2], xml_counts[1], xml_counts[2])
+                != stdout_counts
             ):
                 # The report is written by pytest itself outside the workspace; a
                 # disagreement means something is printing summaries of its own.
@@ -1150,7 +1153,9 @@ def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
 
     The skip count must come from the *same* summary line as the pass/fail counts.
     Searching the whole stdout let a trial print ``0 skipped`` early and mask real
-    skips (external audit, verified).
+    skips (external audit, verified). ``xfailed`` counts as skipped — that is how
+    the JUnit report records it — and ``xpassed`` counts as a pass, so the numbers
+    line up with the report the gate cross-checks.
     """
     import re
 
@@ -1160,13 +1165,22 @@ def _parse_test_counts(stdout: str) -> tuple[int, int, int]:
         stripped = line.strip().strip("=").strip()
         if not stripped:
             continue
-        if re.search(r"\d+\s+(passed|failed|checks?\b)", stripped, re.I) or "skipped" in stripped.lower():
-            match = re.search(r"(\d+)\s+skipped", stripped)
-            if match:
-                skipped = int(match.group(1))
-            else:
-                # PHPUnit spells it "Skipped: 1", not "1 skipped"; unittest
-                # puts the count after an equals sign: "OK (skipped=1)".
+        if (
+            re.search(r"\d+\s+(passed|failed|checks?\b)", stripped, re.I)
+            or "skipped" in stripped.lower()
+            or "xfailed" in stripped.lower()
+            or "xpassed" in stripped.lower()
+        ):
+            # pytest spells an expected failure "xfailed"; its JUnit report marks
+            # it <skipped>, so both outcomes count as skipped here. An "xpassed"
+            # test is a pass in the report, but pytest's summary line leaves it
+            # out of "N passed" — add it back so the two readings line up.
+            skipped = sum(
+                int(count)
+                for count in re.findall(r"(\d+)\s+(?:skipped|xfailed)\b", stripped)
+            )
+            total += sum(int(count) for count in re.findall(r"(\d+)\s+xpassed\b", stripped))
+            if skipped == 0:
                 match = re.search(r"\bSkipped:\s*(\d+)", stripped) or re.search(
                     r"\bskipped=(\d+)", stripped, re.I
                 )

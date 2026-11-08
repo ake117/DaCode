@@ -65,6 +65,29 @@ def test_skipping_a_test_is_caught_by_the_baseline(tmp_path):
     assert report.passed is False
 
 
+def test_an_xfail_is_not_a_counts_disagreement(tmp_path):
+    """pytest prints 'xfailed' while JUnit records it as <skipped>; both describe
+    the same run, so the cross-check must not call it a tampered summary."""
+    ws = _workspace(tmp_path, tests={
+        "test_a.py": GREEN,
+        "test_b.py": (
+            "import pytest\n\n"
+            "def _value():\n"
+            "    return 1\n\n"
+            "@pytest.mark.xfail(reason='known gap')\n"
+            "def test_b():\n"
+            "    assert _value() == 2\n"
+        ),
+    })
+    critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
+
+    report = critic.review_workspace(ws)
+
+    assert "counts_disagree" not in {f.check for f in report.findings}
+    assert report.passed is True
+    assert (report.tests_total, report.tests_failed, report.tests_skipped) == (2, 0, 1)
+
+
 def test_baseline_does_not_block_a_clean_run(tmp_path):
     ws = _workspace(tmp_path, tests={"test_a.py": GREEN})
     critic = PstackCritic(test_command=(sys.executable, "-m", "pytest", "-q"))
