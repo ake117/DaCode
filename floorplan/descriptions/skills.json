@@ -1,0 +1,72 @@
+{
+  "files": {
+    "skills/dacode/references/embedding-providers.md": {
+      "name": "ผู้ให้บริการเวกเตอร์",
+      "description": "ตัวเลือกบริการแปลงข้อความเป็นเวกเตอร์และวิธีตั้งค่าแต่ละเจ้า"
+    },
+    "skills/dacode/references/external-audit.md": {
+      "name": "การตรวจจากภายนอก",
+      "description": "วิธีให้คนนอกตรวจงานแบบไม่เชื่อถือโค้ดภายใน"
+    },
+    "skills/dacode/references/gate-integrity.md": {
+      "name": "ความสมบูรณ์ของด่านตรวจ",
+      "description": "วิธีตรวจว่าด่านตรวจคุณภาพยังทำงานจริง ไม่ได้ถูกปิดหรือข้าม"
+    },
+    "skills/dacode/references/harness-notes.md": {
+      "name": "บันทึกเรื่องชุดคำสั่ง",
+      "description": "บทเรียนจากการปรับชุดคำสั่งและสิ่งที่ได้ผลจริง"
+    },
+    "skills/dacode/references/isolation.md": {
+      "name": "การแยกวงทำงาน",
+      "description": "วิธีกันไม่ให้คำสั่งหนึ่งลามไปกระทบไฟล์หรือระบบอื่น"
+    },
+    "skills/dacode/references/judgment.md": {
+      "name": "เกณฑ์ตัดสินงาน",
+      "description": "อธิบายเกณฑ์ให้คะแนนและเส้นแบ่งระหว่างผ่านกับต้องแก้"
+    },
+    "skills/dacode/references/mcp-server.md": {
+      "name": "ช่องเชื่อมสำหรับ agent",
+      "description": "วิธีเปิดและเรียกใช้ช่องทางที่ให้ agent อื่นส่งงานเข้ามา"
+    },
+    "skills/dacode/references/memory-and-embeddings.md": {
+      "name": "ความจำและเวกเตอร์",
+      "description": "วิธีเก็บบทเรียนและค้นด้วยความหมาย รวมถึงการเลือกที่เก็บ"
+    },
+    "skills/dacode/references/observability-and-fleet.md": {
+      "name": "การเฝ้าดูและงานหลายเครื่อง",
+      "description": "วิธีติดตามงานที่รันอยู่และดูแลหลายงานพร้อมกัน"
+    },
+    "skills/dacode/references/orca-integration.md": {
+      "name": "เชื่อมกับ Orca",
+      "description": "วิธีให้ DaCode ทำงานร่วมกับ Orca ในการจัดการหลายงาน"
+    },
+    "skills/dacode/references/project-playbook.md": {
+      "name": "คู่มือประจำโปรเจกต์",
+      "description": "ลำดับงานและคำสั่งที่ใช้บ่อยเมื่อทำงานกับโปรเจกต์หนึ่งโปรเจกต์"
+    },
+    "skills/dacode/references/security-boundaries.md": {
+      "name": "ขอบเขตความปลอดภัย",
+      "description": "สิ่งที่ระบบป้องกันและสิ่งที่ไม่รับประกัน เพื่อให้ผู้ใช้ตัดสินใจได้ถูก"
+    },
+    "skills/dacode/scripts/gate-integrity-probe.py": {
+      "name": "ตัวตรวจด่านคุณภาพ",
+      "description": "ยิงงานทดสอบเล็ก ๆ เพื่อดูว่าด่านตรวจยังจับปัญหาได้จริง"
+    },
+    "skills/dacode/scripts/pack_for_web_audit.py": {
+      "name": "แพ็กโค้ดส่งตรวจ",
+      "description": "รวมไฟล์ที่จำเป็นเป็นชุดเดียวเพื่อส่งให้ผู้ตรวจภายนอก"
+    },
+    "skills/dacode/SKILL.md": {
+      "name": "คู่มือการใช้ DaCode",
+      "description": "สอน agent ว่า DaCode ทำงานอย่างไร ใช้คำสั่งไหน และข้อควรระวัง"
+    },
+    "skills/dacode/templates/audit-brief.md": {
+      "name": "แม่แบบโจทย์ตรวจงาน",
+      "description": "โครงคำอธิบายงานและขอบเขตสำหรับส่งให้ผู้ตรวจภายนอก"
+    },
+    "skills/README.md": {
+      "name": "ดัชนี skill",
+      "description": "อธิบายว่าโฟลเดอร์ skills เก็บอะไรและติดตั้งอย่างไร"
+    }
+  }
+}

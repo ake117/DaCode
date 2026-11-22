@@ -1,0 +1,32 @@
+{
+  "files": {
+    "dacode/memory/__init__.py": {
+      "name": "ความจำหลัก",
+      "description": "บันทึก ค้น และลบบทเรียนของโปรเจกต์ พร้อมเลือกที่เก็บ"
+    },
+    "dacode/memory/backends/__init__.py": {
+      "name": "จุดเริ่มที่เก็บความจำ",
+      "description": "เลือกว่าจะเก็บความจำไว้ในเครื่องหรือฝากกับบริการภายนอก"
+    },
+    "dacode/memory/backends/hermes.py": {
+      "name": "ฝากความจำกับ Hermes",
+      "description": "เก็บและค้นบทเรียนผ่านความจำของ Hermes เพื่อใช้ร่วมกับ session อื่น"
+    },
+    "dacode/memory/backends/local.py": {
+      "name": "เก็บความจำในเครื่อง",
+      "description": "เก็บบทเรียนไว้ในไฟล์ของโปรเจกต์เอง ไม่ต้องพึ่งบริการภายนอก"
+    },
+    "dacode/memory/embedder.py": {
+      "name": "แปลงข้อความเป็นตัวเลข",
+      "description": "เปลี่ยนข้อความเป็นเวกเตอร์เพื่อให้ค้นหาด้วยความหมายได้"
+    },
+    "dacode/memory/semantic.py": {
+      "name": "ค้นด้วยความหมาย",
+      "description": "หาบทเรียนที่ใกล้เคียงกับงานปัจจุบันแม้ใช้คำไม่ตรงกัน"
+    },
+    "dacode/memory/vectors.py": {
+      "name": "คำนวณความใกล้เคียง",
+      "description": "เก็บเวกเตอร์และวัดว่าสองข้อความใกล้กันแค่ไหน"
+    }
+  }
+}

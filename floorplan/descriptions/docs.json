@@ -1,0 +1,68 @@
+{
+  "files": {
+    ".dacode.md": {
+      "name": "บันทึกสำหรับ agent",
+      "description": "คำสั่งและข้อตกลงประจำโปรเจกต์ที่ agent ต้องอ่านก่อนลงมือทำงาน"
+    },
+    "AGENTS.md": {
+      "name": "คู่มือสำหรับ agent",
+      "description": "อธิบายวิธีทำงานกับ repo นี้ กติกา และสิ่งที่ห้ามทำ"
+    },
+    "ARCHITECTURE.md": {
+      "name": "เอกสารสถาปัตยกรรม",
+      "description": "อธิบายภาพรวมการทำงานของระบบและเหตุผลเบื้องหลังการออกแบบ"
+    },
+    "docs/design/blueprint-ultimate-autonomous-engineering-rig.md": {
+      "name": "พิมพ์เขียวระบบอัตโนมัติ",
+      "description": "ร่างภาพระบบที่ทำงานเองได้ครบวงจร ตั้งแต่รับงานจนตรวจและส่งมอบ"
+    },
+    "docs/design/google-harness2-recursive-agent-harnessing.md": {
+      "name": "แนวคิดชุดคำสั่งแบบวนซ้ำ",
+      "description": "บันทึกแนวคิดการปรับชุดคำสั่งให้เก่งขึ้นเรื่อย ๆ จากผลงานจริง"
+    },
+    "docs/design/README.md": {
+      "name": "ดัชนีบันทึกออกแบบ",
+      "description": "รวมลิงก์เอกสารออกแบบและรีวิวแต่ละรอบไว้ที่เดียว"
+    },
+    "docs/design/reviews/2026-11-01/0-synthesis.md": {
+      "name": "สรุปรวมรีวิว",
+      "description": "รวมข้อสรุปจากรีวิวทุกด้านในรอบวันที่ 1 พ.ย. 2026"
+    },
+    "docs/design/reviews/2026-11-01/1-zoom-out.md": {
+      "name": "มองภาพรวม",
+      "description": "ถอยออกมาดูภาพใหญ่ของระบบว่าอะไรควรมีหรือควรตัดออก"
+    },
+    "docs/design/reviews/2026-11-01/2-comprehension.md": {
+      "name": "ตรวจความเข้าใจ",
+      "description": "ทบทวนว่าผู้อ่านใหม่เข้าใจระบบได้จริงหรือไม่"
+    },
+    "docs/design/reviews/2026-11-01/3-critic.md": {
+      "name": "ข้อวิจารณ์",
+      "description": "รวมข้อติชมและจุดอ่อนที่พบในรอบรีวิว"
+    },
+    "docs/design/reviews/2026-11-01/4-readiness.md": {
+      "name": "ความพร้อมใช้งาน",
+      "description": "ประเมินว่าระบบพร้อมใช้งานจริงหรือยังเหลืออะไร"
+    },
+    "docs/design/reviews/2026-11-01/5-harness2-role.md": {
+      "name": "บทบาทของชุดคำสั่งรุ่นสอง",
+      "description": "อธิบายว่าชุดคำสั่งรุ่นใหม่จะเข้ามาช่วยส่วนไหนของระบบ"
+    },
+    "docs/FAQ.md": {
+      "name": "คำถามที่พบบ่อย",
+      "description": "รวมคำถามที่เจอบ่อยและวิธีแก้สั้น ๆ"
+    },
+    "docs/installing-pi.md": {
+      "name": "ติดตั้ง Pi",
+      "description": "ขั้นตอนติดตั้งและตั้งค่าผู้ช่วย Pi ให้ DaCode เรียกใช้ได้"
+    },
+    "README.md": {
+      "name": "คู่มือเริ่มต้น",
+      "description": "บอกว่า DaCode ทำอะไร ใช้กับใคร และเริ่มใช้งานอย่างไร"
+    },
+    "SECURITY.md": {
+      "name": "นโยบายความปลอดภัย",
+      "description": "บอกวิธีรายงานช่องโหว่และขอบเขตที่ระบบป้องกันไว้"
+    }
+  }
+}

@@ -1,0 +1,302 @@
+{
+  "$schema": "floorplan/architecture@1",
+  "project": {
+    "name": "DaCode",
+    "summary": "ตัวช่วยเขียนโค้ดที่รันในเครื่องตัวเอง: รับงานหนึ่งงาน ให้โมเดลลงมือแก้โค้ดใน sandbox ตรวจงานด้วย critic เก็บความจำของโปรเจกต์ และเรียนรู้จากผลงานที่ผ่านมา — ใช้ไลบรารีพื้นฐานของ Python เท่านั้น ไม่ต้องติดตั้งอะไรเพิ่ม",
+    "entrypoints": [
+      "dacode/cli.py",
+      "dacode/mcp/server.py"
+    ]
+  },
+  "include": [
+    "code",
+    "config",
+    "docs"
+  ],
+  "ignore": [
+    "tests/**",
+    "dacode.egg-info/**",
+    "**/__pycache__/**",
+    "floorplan/**",
+    ".venv/**",
+    "runs/**",
+    ".github/**"
+  ],
+  "nodes": [
+    {
+      "id": "interface",
+      "label": "ทางเข้าของผู้ใช้",
+      "kind": "service",
+      "summary": "จุดที่คนหรือ agent เรียกใช้: คำสั่งบน terminal และช่องทางที่ให้ผู้ช่วย AI ภายนอกส่งงานเข้ามาทำต่อ",
+      "paths": [
+        "dacode/cli.py",
+        "dacode/__init__.py",
+        "dacode/mcp/**"
+      ],
+      "details": "cli.py แปลงคำสั่งเป็นงานเดียวแล้วส่งให้ตัวจัดการงาน ส่วน mcp/server.py เปิดช่องให้ agent อื่นเรียกใช้ความสามารถเดียวกัน"
+    },
+    {
+      "id": "orchestrator",
+      "label": "ตัวจัดการงาน",
+      "kind": "worker",
+      "summary": "รับงานเข้ามา ไล่ทีละขั้น จำสถานะไว้กลางทาง และบันทึกว่าแต่ละรอบทำอะไรไปบ้าง เพื่อให้รันต่อได้หรือย้อนดูได้",
+      "paths": [
+        "dacode/orchestrator.py",
+        "dacode/state.py",
+        "dacode/kanban.py",
+        "dacode/watch.py",
+        "dacode/runlog.py",
+        "dacode/retro.py"
+      ],
+      "details": "state.py เก็บสถานะงานลงไฟล์, kanban.py คุมลำดับงานที่ค้างอยู่, watch.py เฝ้าดูความคืบหน้า, retro.py สรุปบทเรียนหลังจบงาน",
+      "tags": [
+        "core"
+      ]
+    },
+    {
+      "id": "executor",
+      "label": "ตัวลงมือแก้โค้ด",
+      "kind": "worker",
+      "summary": "เลือกวิธีทำงานตามเครื่องมือที่มีในเครื่อง: เรียก agent ภายนอก หรือเขียนสคริปต์เอง แล้วส่งผลลัพธ์กลับพร้อมหลักฐานว่าแก้อะไรไป",
+      "paths": [
+        "dacode/executor/**"
+      ],
+      "details": "มีตัวเรียก Antigravity (agy), Pi และตัวรันสคริปต์ตรง ๆ — ทุกตัวใช้สัญญาเดียวกันคือได้งานเข้าไปและคืนผลพร้อม log"
+    },
+    {
+      "id": "sandbox",
+      "label": "กรงทรายกันความเสียหาย",
+      "kind": "service",
+      "summary": "ล้อมการแก้โค้ดให้อยู่ในวงจำกัด: จำกัดการเข้าถึงไฟล์ เครือข่าย และเวลาทำงาน เพื่อไม่ให้คำสั่งที่ผิดลามออกไปนอกโปรเจกต์",
+      "paths": [
+        "dacode/sandbox/**"
+      ],
+      "details": "ใช้ bwrap ของ Linux กั้นพื้นที่ทำงาน พร้อมสำรอง/คืนไฟล์เมื่อคำสั่งล้มเหลว"
+    },
+    {
+      "id": "discipline",
+      "label": "ตรวจคุณภาพงาน",
+      "kind": "service",
+      "summary": "ตรวจงานที่ได้ว่าตรงตามที่ขอหรือไม่ ด้วยการให้โมเดลอีกตัววิจารณ์และให้คะแนนตามเกณฑ์ แล้วตัดสินว่าผ่านหรือต้องแก้",
+      "paths": [
+        "dacode/discipline/**",
+        "dacode/judgment.py",
+        "dacode/jeval.py",
+        "dacode/redact.py"
+      ],
+      "details": "critic.py คือหัวใจ (ไฟล์ใหญ่สุดของโปรเจกต์) — ให้คะแนนและให้เหตุผลเป็นข้อ ๆ, checks.py ตรวจกฎพื้นฐาน, redact.py ซ่อนความลับก่อนส่งให้โมเดล",
+      "tags": [
+        "hotspot",
+        "core"
+      ]
+    },
+    {
+      "id": "memory",
+      "label": "ความจำของโปรเจกต์",
+      "kind": "library",
+      "summary": "จำสิ่งที่เรียนรู้จากงานก่อน ๆ แล้วดึงกลับมาใช้เมื่อเจองานคล้ายกัน พร้อมค้นหาด้วยความหมายไม่ใช่แค่คำตรงตัว",
+      "paths": [
+        "dacode/memory/**"
+      ],
+      "details": "เก็บเวกเตอร์ของบันทึกไว้ ค้นด้วยความคล้ายของความหมาย และเลือกได้ว่าจะเก็บในเครื่องหรือฝากไว้กับ Hermes"
+    },
+    {
+      "id": "llm",
+      "label": "ช่องคุยกับโมเดล",
+      "kind": "library",
+      "summary": "คุยกับโมเดลภาษาผ่านรูปแบบคำขอมาตรฐานเดียว จึงสลับผู้ให้บริการได้โดยไม่ต้องแก้โค้ดส่วนอื่น",
+      "paths": [
+        "dacode/llm/**"
+      ]
+    },
+    {
+      "id": "harness",
+      "label": "ปรับปรุงคำสั่งให้ดีขึ้น",
+      "kind": "library",
+      "summary": "เก็บชุดคำสั่งที่ใช้สอนงานไว้ แล้วลองปรับให้ได้ผลดีขึ้นเรื่อย ๆ จากผลของรอบก่อน",
+      "paths": [
+        "dacode/harness/**"
+      ],
+      "details": "optimizer.py ปรับคำสั่งแบบวนซ้ำ, models.py เก็บว่าชุดคำสั่งไหนให้ผลดีที่สุด"
+    },
+    {
+      "id": "settings",
+      "label": "ค่าตั้งระบบ",
+      "kind": "config",
+      "summary": "อ่านค่าจากไฟล์ตั้งค่าและตัวแปรสภาพแวดล้อม: ผู้ให้บริการโมเดล คีย์ เวลาที่อนุญาต และโฟลเดอร์เก็บงาน",
+      "paths": [
+        "dacode/config.py",
+        "dacode/env.py",
+        "pyproject.toml"
+      ]
+    },
+    {
+      "id": "docs",
+      "label": "เอกสารโปรเจกต์",
+      "kind": "config",
+      "summary": "README, เอกสารสถาปัตยกรรม และคำถามที่พบบ่อย — อ่านก่อนลงมือแก้ระบบ",
+      "paths": [
+        "*.md",
+        "docs/**"
+      ]
+    },
+    {
+      "id": "skills",
+      "label": "ชุดคำสั่งสอน agent",
+      "kind": "config",
+      "summary": "ชุดคำสั่ง (skill) ที่สอนผู้ช่วย AI อื่นให้ใช้งาน DaCode ได้ถูกวิธี — อยู่ในโปรเจกต์เพื่อให้ติดตั้งไปกับ repo",
+      "paths": [
+        "skills/**"
+      ]
+    },
+    {
+      "id": "external.llm",
+      "label": "ผู้ให้บริการโมเดล",
+      "kind": "external",
+      "summary": "บริการโมเดลภาษาที่ DaCode เรียกใช้ — เลือกได้หลายเจ้าและสลับได้ผ่านค่าตั้ง",
+      "hosts": [
+        "api.openai.com",
+        "openrouter.ai",
+        "api.z.ai",
+        "api.x.ai",
+        "generativelanguage.googleapis.com"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "interface",
+      "to": "orchestrator",
+      "kind": "call",
+      "label": "ส่งงานเข้ามา"
+    },
+    {
+      "from": "orchestrator",
+      "to": "executor",
+      "kind": "call",
+      "label": "มอบหมายให้ลงมือ"
+    },
+    {
+      "from": "executor",
+      "to": "sandbox",
+      "kind": "call",
+      "label": "ทำงานในกรงทราย"
+    },
+    {
+      "from": "orchestrator",
+      "to": "discipline",
+      "kind": "call",
+      "label": "ให้ตรวจงานที่ได้"
+    },
+    {
+      "from": "discipline",
+      "to": "llm",
+      "kind": "call",
+      "label": "ขอความเห็นจากโมเดล"
+    },
+    {
+      "from": "orchestrator",
+      "to": "memory",
+      "kind": "data",
+      "label": "บันทึก/ดึงบทเรียน"
+    }
+  ],
+  "annotations": [
+    {
+      "path": "dacode/discipline/critic.py",
+      "note": "ไฟล์ใหญ่สุด (1.3k บรรทัด) — รวมเกณฑ์ให้คะแนน การให้เหตุผล และการตัดสินผ่าน/ไม่ผ่านไว้ที่เดียว แก้เกณฑ์ที่นี่กระทบทุกงาน",
+      "tags": [
+        "hotspot"
+      ]
+    },
+    {
+      "path": "dacode/sandbox/bwrap.py",
+      "note": "ชั้นที่กันไม่ให้คำสั่งลามออกนอกโปรเจกต์ — ถ้าแก้แล้วพลาด งานจะเขียนไฟล์นอกวงได้ ต้องทดสอบกับ tests/sandbox ก่อน",
+      "tags": [
+        "tricky"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "one-run",
+      "title": "งานหนึ่งงานเดินอย่างไร",
+      "steps": [
+        {
+          "node": "interface",
+          "note": "ผู้ใช้พิมพ์คำสั่ง หรือ agent อื่นส่งงานผ่านช่อง MCP"
+        },
+        {
+          "node": "orchestrator",
+          "note": "แตกงานเป็นขั้น จำสถานะ และเลือกเครื่องมือที่จะใช้"
+        },
+        {
+          "node": "executor",
+          "note": "ตัวลงมือแก้โค้ดเรียก agent หรือสคริปต์ตามที่ตั้งไว้"
+        },
+        {
+          "node": "sandbox",
+          "note": "คำสั่งที่แก้ไฟล์ถูกจำกัดวงและมีสำรองไว้กู้คืน"
+        },
+        {
+          "node": "discipline",
+          "note": "critic ให้คะแนนและเหตุผล แล้วตัดสินว่าจะผ่านหรือให้แก้ต่อ"
+        },
+        {
+          "node": "orchestrator",
+          "note": "บันทึกผลลง log และปิดงาน"
+        }
+      ]
+    },
+    {
+      "id": "learn-from-run",
+      "title": "จำและเรียนรู้จากงานที่ผ่านมา",
+      "steps": [
+        {
+          "node": "orchestrator",
+          "note": "จบงานแล้วสรุปบทเรียนด้วย retro"
+        },
+        {
+          "node": "memory",
+          "note": "เก็บบทเรียนพร้อมเวกเตอร์ไว้ค้นภายหลัง"
+        },
+        {
+          "node": "harness",
+          "note": "นำผลที่ได้ไปปรับชุดคำสั่งให้รอบหน้าดีขึ้น"
+        }
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "node": "interface",
+      "title": "เริ่มที่ทางเข้า",
+      "note": "คำสั่ง `dacode` และช่อง MCP — สองทางที่งานเข้ามา"
+    },
+    {
+      "node": "orchestrator",
+      "title": "สมองที่คุมลำดับ",
+      "note": "state, kanban, watch, retro — จำได้ว่างานอยู่ขั้นไหน"
+    },
+    {
+      "node": "executor",
+      "title": "คนลงมือ",
+      "note": "เลือกใช้ agy / pi / สคริปต์ ตามเครื่องมือที่มี"
+    },
+    {
+      "node": "sandbox",
+      "title": "กรงกันพลาด",
+      "note": "จำกัดไฟล์ เครือข่าย และเวลา — จุดที่ต้องระวังที่สุด"
+    },
+    {
+      "node": "discipline",
+      "title": "กรรมการตัดสิน",
+      "note": "critic ให้คะแนนงานก่อนปล่อยผ่าน"
+    },
+    {
+      "node": "memory",
+      "title": "ความจำระยะยาว",
+      "note": "บทเรียนถูกเก็บและค้นด้วยความหมาย"
+    }
+  ]
+}
