@@ -165,7 +165,3 @@ connected:
    score, automatically.
 
 ---
-
-*English version of the vault note
-"การสั่งงาน DaCode จาก AI Agent เครื่องอื่น (Cross-Agent Dispatch Guide)"
-(ake_obsidian, Projects/DaCode/Docs/). Translated 2026-11-25.*
