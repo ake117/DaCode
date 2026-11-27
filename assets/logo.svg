@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="dacode-grad" x1="48" y1="76" x2="208" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="50%" stop-color="#818CF8"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="dacode-bg" x1="26" y1="26" x2="230" y2="230" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#1E1B4B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle badge with ~10% baked-in transparent margin -->
+  <rect x="26" y="26" width="204" height="204" rx="42" fill="url(#dacode-bg)" stroke="#38BDF8" stroke-opacity="0.35" stroke-width="3"/>
+
+  <!-- Code brackets < > -->
+  <path d="M80 94L50 128L80 162" stroke="url(#dacode-grad)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M176 94L206 128L176 162" stroke="url(#dacode-grad)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 5-layer engineering rig stack -->
+  <rect x="98" y="87" width="60" height="10" rx="5" fill="#38BDF8"/>
+  <rect x="98" y="105" width="60" height="10" rx="5" fill="#60A5FA"/>
+  <rect x="98" y="123" width="60" height="10" rx="5" fill="#818CF8"/>
+  <rect x="98" y="141" width="60" height="10" rx="5" fill="#A78BFA"/>
+  <rect x="98" y="159" width="60" height="10" rx="5" fill="#34D399"/>
+
+  <!-- Verified gate indicator -->
+  <circle cx="194" cy="62" r="9" fill="#34D399"/>
+</svg>
