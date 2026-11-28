@@ -23,7 +23,7 @@ from dacode.harness.models import HarnessResult, HarnessVariant
 from dacode.harness.optimizer import DEFAULT_SYSTEM_PROMPT, HarnessOptimizer
 from dacode.judgment import build_judge
 from dacode.llm import build_llm
-from dacode.memory import Lesson, VaultMemory
+from dacode.memory import Lesson, SIMStore, VaultMemory
 from dacode.redact import redact
 from dacode.sandbox import GitSandbox
 from dacode.sandbox.bwrap import IsolationPolicy, available as bwrap_available, describe as describe_isolation
@@ -48,6 +48,7 @@ class DaCodeRig:
         executor=None,
         critic: PstackCritic | None = None,
         memory: VaultMemory | None = None,
+        sim: SIMStore | None = None,
     ) -> None:
         self.config = config
         self.llm = llm or build_llm(config.llm_kind, model=config.model, base_url=config.base_url)
@@ -74,6 +75,14 @@ class DaCodeRig:
             self.memory = VaultMemory(
                 config.vault, scope=config.repo.name, semantic=config.semantic
             )
+        self.sim = sim
+        if self.sim is None:
+            if config.sim_path is not None:
+                self.sim = SIMStore(config.sim_path)
+            elif self.memory is not None and config.vault is not None:
+                self.sim = SIMStore(
+                    Path(config.vault) / "Projects" / config.repo.name / "sim.json"
+                )
         self.optimizer = HarnessOptimizer(
             llm=self.llm,
             sandbox=self.sandbox,
@@ -81,6 +90,7 @@ class DaCodeRig:
             critic=self.critic,
             memory=self.memory,
             judge=self.judge,
+            sim=self.sim,
             escalation_models=config.escalate_models,
             baseline=config.baseline,
             parallel=config.parallel,
@@ -88,6 +98,8 @@ class DaCodeRig:
             budget=config.budget,
             variants_per_round=config.variants_per_round,
             keep_winning_worktree=config.keep_winning_worktree,
+            repo_name=config.repo.name,
+            default_model=config.model,
         )
 
     def _build_executor(self):

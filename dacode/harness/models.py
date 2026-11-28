@@ -18,6 +18,9 @@ class HarnessVariant:
     memory_snippets: list[str] = field(default_factory=list)
     parent_id: str | None = None
     label: str = ""
+    root_cause: str = ""
+    rationale: str = ""
+    predicted_outcome: str = ""
     payload: dict = field(default_factory=dict)
     model: str | None = None  # executor model for this variant (fleet diversity)
     id: str = field(default_factory=lambda: f"v{next(_counter)}")

@@ -112,6 +112,11 @@ def _add_run_options(p: argparse.ArgumentParser) -> None:
         help="bounded-decision judge for compose: 'jev' = TypeSafe System One "
         "(unset = off)",
     )
+    p.add_argument(
+        "--sim",
+        default=None,
+        help="path to a portable SIM json store for cross-model/cross-repo CRSI",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -245,6 +250,8 @@ def _make_config(args) -> DaCodeConfig:
         cfg.judge = args.judge
     if getattr(args, "escalate_models", None):
         cfg.escalate_models = [m.strip() for m in args.escalate_models.split(",") if m.strip()]
+    if getattr(args, "sim", None):
+        cfg.sim_path = Path(args.sim).expanduser().resolve()
     return cfg
 
 

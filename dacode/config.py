@@ -36,6 +36,7 @@ def _env_float(name: str, default: float) -> float:
 class DaCodeConfig:
     repo: Path
     vault: Path | None = None
+    sim_path: Path | None = None
     sandbox_root: Path | None = None
 
     llm_kind: str = "openrouter"
@@ -68,9 +69,16 @@ class DaCodeConfig:
     @classmethod
     def from_env(cls, repo: str | Path | None = None) -> "DaCodeConfig":
         vault = os.environ.get("DACODE_VAULT") or _default_vault()
+        raw_sim = (os.environ.get("DACODE_SIM_PATH") or "").strip()
+        sim_path = (
+            Path(raw_sim).expanduser().resolve()
+            if raw_sim and raw_sim.lower() != "off"
+            else None
+        )
         return cls(
             repo=Path(repo or os.environ.get("DACODE_REPO") or os.getcwd()).expanduser().resolve(),
             vault=Path(vault).expanduser().resolve() if vault else None,
+            sim_path=sim_path,
             llm_kind=os.environ.get("DACODE_LLM", "openrouter"),
             model=os.environ.get("DACODE_MODEL", "deepseek/deepseek-v4.1-flash"),
             executor=os.environ.get("DACODE_EXECUTOR", "pi"),

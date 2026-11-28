@@ -1,19 +1,28 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="DaCode logo" width="120" />
+</p>
+
 # DaCode — The Ultimate Autonomous Engineering Rig
 
 > A 5-layer coding-agent rig built from the blueprint *Ultimate Autonomous
-> Engineering Rig* — combining **Pi**, **Google Harness²**, **pstack**, an
-> **Obsidian vault memory**, and an **isolated git sandbox** into one CLI,
-> with an optional **Jev** (TypeSafe System One) judgment layer on Compose.
+> Engineering Rig* — combining **Pi**, **Google Harness²**, **SIM (Self-Improvement
+> Memory)**, **pstack**, an **Obsidian vault memory**, and an **isolated git
+> sandbox** into one CLI, with an optional **Jev** (TypeSafe System One) judgment
+> layer on Compose.
 
 DaCode does not just run a prompt once. It **proposes** several ways to run the
-task, **probes** each one in its own git worktree, lets an **adversarial critic**
-gate the result against real tests, and **writes the lesson back** to the vault
-so the next run starts smarter. No ground-truth labels required.
+task (recording each variant's target root cause, rationale, and predicted outcome
+before execution), **probes** each one in its own isolated git worktree, lets an
+**adversarial critic** gate the result against real tests, records **both passing
+and failing outcomes** into optimizer memory (**SIM**) for continual cross-model
+improvement, and **writes winning lessons back** to the vault so the next run
+starts smarter. No ground-truth labels required.
 
 ## Contents
 
 [The 5-layer stack](#the-5-layer-stack) · [Install](#install) ·
 [Usage](#usage) · [Memory backends](#memory-backends) ·
+[Self-Improvement Memory (SIM & CRSI)](#self-improvement-memory-sim--crsi) ·
 [How a run works](#how-a-run-works) · [Isolation](#isolation) ·
 [Tests](#tests) · [What DaCode is for](#what-dacode-is-for-and-what-to-expect) ·
 [FAQ](#faq) · [Going further](#going-further) ·
@@ -27,8 +36,8 @@ so the next run starts smarter. No ground-truth labels required.
 
 | # | Layer | Module | Job |
 |---|-------|--------|-----|
-| 1 | **Vault Memory** | `dacode/memory/` | retrieve prior lessons → seed the harness; ingest the winner back as a note |
-| 2 | **Harness² Optimizer** | `dacode/harness/` | Propose → Probe → Compose recursion over *harness* variants |
+| 1 | **Vault Memory + SIM** | `dacode/memory/` | policy lessons (`VaultMemory`) + optimizer edit history (`SIMStore`, arXiv 2611.18856) |
+| 2 | **Harness² Optimizer** | `dacode/harness/` | Propose → Probe → Compose recursion over *harness* variants, guided by SIM |
 | 3 | **Executor** | `dacode/executor/` | Pi coding agent, the Antigravity CLI (`agy`), or a script / test double does the change |
 | 4 | **pstack Discipline** | `dacode/discipline/` | AST checks for weak tests + a real `pytest` run as the gate |
 | 5 | **Git Sandbox** | `dacode/sandbox/` | one isolated `git worktree` per trial, checkpoint + rollback |
@@ -37,10 +46,12 @@ so the next run starts smarter. No ground-truth labels required.
 ```
         ┌───────────────────────────────────────────────┐
         │ 1. Vault Memory   retrieve(task) → snippets    │
+        │    SIM Store      render() → optimizer history │
         └───────────────────────┬───────────────────────┘
                                 ▼
         ┌───────────────────────────────────────────────┐
         │ 2. Harness²   propose(n) → probe → compose     │
+        │               (reads SIM; records pass + fail) │
         └───────────────────────┬───────────────────────┘
                                 ▼
         ┌───────────────────────────────────────────────┐
@@ -53,7 +64,8 @@ so the next run starts smarter. No ground-truth labels required.
         └───────────────────────┬───────────────────────┘
                                 ▼
         ┌───────────────────────────────────────────────┐
-        │ 1. Vault Memory   ingest(lesson) if it passed  │
+        │ 1. SIM Store      record all probed variants   │
+        │    Vault Memory   ingest(lesson) if it passed  │
         └───────────────────────────────────────────────┘
 ```
 
@@ -128,8 +140,10 @@ OPENROUTER_API_KEY=... JEV_API_KEY=... .venv/bin/dacode run "..." --budget 2 --j
 | `--executor-provider` | any provider preset — which key the Pi executor authenticates with | `openrouter` |
 | `--judge` | `jev` (unset = off) | off |
 | `--escalate-models` | comma-separated model ladder, e.g. `claude-sonnet-4-5,gpt-4o` | none |
+| `--sim` | path to a portable SIM JSON store for cross-model/cross-repo CRSI | `<vault>/Projects/<repo>/sim.json` when vault is set |
 
-Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_LLM`,
+Environment overrides: `DACODE_REPO`, `DACODE_VAULT`, `DACODE_SIM_PATH` (`off`
+disables the env override), `DACODE_LLM`,
 `DACODE_MODEL`, `DACODE_EXECUTOR`, `DACODE_BUDGET`, `DACODE_VARIANTS`,
 `DACODE_JUDGE`, `DACODE_ESCALATE_MODELS`, `DACODE_RUNLOG` (`off` disables
 the recorder; default `~/.local/state/dacode/runlog.jsonl`),
@@ -224,6 +238,47 @@ export DACODE_SEMANTIC_BACKEND=hermes                            # the bundled a
 
 `dacode/memory/backends/hermes.py` is the worked example: it shells out to an
 external search script and maps its JSON onto `SemanticHit`.
+
+## Self-Improvement Memory (SIM & CRSI)
+
+Inspired by *Self-Improvement Memory Enables Continual Recursive Self-Improvement*
+(arXiv:2611.18856), DaCode separates **optimizer memory** from **policy memory**:
+
+- **Policy memory (`VaultMemory`)** stores winning markdown lessons under
+  `<vault>/Projects/<repo>/Lessons/` and seeds `variant.memory_snippets` for the
+  executor.
+- **Optimizer memory (`SIMStore`, `dacode/memory/sim.py`)** stores structured
+  harness-edit history for the **proposer** and **selector (`compose`)** — never
+  injected into executor `memory_snippets`.
+
+How SIM works in every run:
+
+1. **Pre-probe intent:** `propose()` asks the optimizer for each variant's
+   `root_cause`, `rationale`, and `predicted_outcome` *before* probing.
+2. **Pass + fail recording:** After each `probe_round()`, *every* probed variant
+   (passing and failing) is appended with its `observed_outcome`, gate errors,
+   and `provenance` (`repo`, `model`, `round`, `task`). Repeated root causes
+   merge under one group without discarding prior edits.
+3. **Whole-block read (no RAG):** `SIMStore.render(max_chars=4000)` injects the
+   bounded history directly into both `propose()` and `compose()` (including the
+   Jev judge state), dropping the oldest entries first so recent evidence always
+   survives.
+4. **Cross-model & cross-repo CRSI:** By default SIM lives at
+   `<vault>/Projects/<repo>/sim.json` (JSON, so vault `*.md` retrieval never
+   leaks it into policy snippets), automatically carrying history across runs,
+   `--fleet` models, and `--escalate-models`. To transfer SIM across repositories
+   or benchmarks, pass `--sim <path>` or set `DACODE_SIM_PATH`:
+
+```bash
+# carry optimizer history from one repo/model into another
+.venv/bin/dacode --repo <repo> run "make tests/test_x.py pass" \
+  --model anthropic/claude-sonnet-5.5 \
+  --sim <vault>/Projects/other-repo/sim.json
+```
+
+Security invariants: all SIM text fields pass through `redact()` before writing,
+files are written atomically with mode `0600` (directory `0700`), and symlinks
+are refused.
 
 ## How a run works
 
@@ -450,6 +505,8 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
 
 - `AGENTS.md` — the tool-agnostic playbook for any agent editing this repo (gate
   ownership, contract-first tests, one module per run, conventions).
+- `docs/cross-agent-dispatch.md` — dispatching DaCode from other AI agents (SSH,
+  Kanban, MCP, Orca, or cloud queues).
 - `skills/` — the agent-facing operating manual (command shapes, first-week
   failure triage, gate-integrity references). Canonical copy lives in the skills
   repository; this snapshot is read-only by convention.
@@ -483,6 +540,10 @@ dacode retro --days 14        # what to change next: pass rate, rounds, slow var
 - [x] Bubblewrap isolation — `--isolate bwrap`: read-only host, empty home,
       workspace-only writes, network unshared, allow-listed env; the gate is
       sandboxed too and fails closed
+- [x] Self-Improvement Memory (SIM & CRSI) — structured optimizer memory
+      (`root_cause`, `rationale`, `predicted_outcome` vs `observed_outcome`,
+      pass + fail history with provenance), kept separate from policy snippets
+      and portable across models/repos via `--sim` / `DACODE_SIM_PATH`
 
 ### Next
 

@@ -26,6 +26,7 @@ from pathlib import Path
 
 from dacode.memory.backends import SemanticHit, SemanticBackend, resolve, status
 from dacode.memory.embedder import Embedder
+from dacode.memory.sim import SIMRecord, SIMStore
 from dacode.memory.vectors import VectorStore, _is_safe_vault_file
 from dacode.memory.backends.hermes import SemanticIndex
 
@@ -33,6 +34,8 @@ __all__ = [
     "VaultMemory",
     "MemoryHit",
     "Lesson",
+    "SIMRecord",
+    "SIMStore",
     "SemanticBackend",
     "SemanticHit",
     "SemanticIndex",

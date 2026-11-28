@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from dacode import runlog
 from dacode.harness.models import HarnessResult, HarnessVariant, ProbeResult
+from dacode.memory.sim import SIMRecord, SIMStore
 from dacode.redact import redact
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ memory snippets injected. Your job is to propose DIFFERENT harness variants
 for the task below, so the rig can contrast them.
 
 Return ONLY a JSON array. Each element:
-{"label": "<short>", "system_prompt": "<full prompt>"}
+{"label": "<short>", "system_prompt": "<full prompt>", "root_cause": "<recurring harness issue addressed>", "rationale": "<why this change>", "predicted_outcome": "<expected gate result before running>"}
 Propose {n} genuinely different variants (vary the prompt strategy, not wording).
 No prose, no markdown fences — JSON only."""
 
@@ -75,6 +76,7 @@ class HarnessOptimizer:
         critic: "PstackCritic",
         memory: "VaultMemory | None" = None,
         judge: "JevJudge | None" = None,
+        sim: SIMStore | None = None,
         *,
         budget: int = 2,
         variants_per_round: int = 2,
@@ -84,6 +86,8 @@ class HarnessOptimizer:
         baseline: tuple[int, int] | None = None,
         parallel: int = 1,
         fleet: list[str] | None = None,
+        repo_name: str = "",
+        default_model: str | None = None,
     ) -> None:
         self.llm = llm
         self.sandbox = sandbox
@@ -91,6 +95,9 @@ class HarnessOptimizer:
         self.critic = critic
         self.memory = memory
         self.judge = judge
+        self.sim = sim
+        self.repo_name = repo_name
+        self.default_model = default_model
         self.budget = max(1, budget)
         self.variants_per_round = max(1, variants_per_round)
         self.base_prompt = base_prompt
@@ -126,6 +133,9 @@ class HarnessOptimizer:
             f"Current best harness system_prompt:\n{base.system_prompt}\n\n"
             f"Seeded memory snippets:\n{base.seed_context() or '(none)'}\n\n"
         )
+        sim_block = self.sim.render() if self.sim is not None else ""
+        if sim_block:
+            user += f"{sim_block}\n\n"
         if failures:
             user += (
                 "The previous round failed the gate. Evidence for the "
@@ -147,6 +157,9 @@ class HarnessOptimizer:
                 HarnessVariant(
                     label=clean_label,
                     system_prompt=str(spec.get("system_prompt") or base.system_prompt),
+                    root_cause=str(spec.get("root_cause") or "").strip(),
+                    rationale=str(spec.get("rationale") or "").strip(),
+                    predicted_outcome=str(spec.get("predicted_outcome") or "").strip(),
                     memory_snippets=list(base.memory_snippets),
                     parent_id=base.id,
                     payload=dict(base.payload),
@@ -374,11 +387,13 @@ class HarnessOptimizer:
         # gate stays the only quality authority. A failure falls through to the
         # reasoning-model pick, then to the measured ranking.
         chosen, chooser = fallback, "ranking"
+        sim_block = self.sim.render() if self.sim is not None else ""
+        sim_section = f"{sim_block}\n\n" if sim_block else ""
         if self.judge is not None and len(ranked) > 1:
             try:
                 pick, confidence = self.judge.choice(
                     state=(
-                        f"Task:\n{task}\n\nProbed harness variants "
+                        f"Task:\n{task}\n\n{sim_section}Probed harness variants "
                         f"(deterministic score order, best first):\n{table}"
                     ),
                     instructions=(
@@ -408,7 +423,7 @@ class HarnessOptimizer:
                 if candidate is not None:
                     chosen, chooser = candidate, "judge"
         if chooser == "ranking":
-            user = f"Task:\n{task}\n\nProbed variants (best first):\n{table}\n\nPick the best."
+            user = f"Task:\n{task}\n\n{sim_section}Probed variants (best first):\n{table}\n\nPick the best."
             try:
                 raw = self.llm.complete(_COMPOSE_SYSTEM, user)
                 data = _parse_json_object(raw)
@@ -481,6 +496,7 @@ class HarnessOptimizer:
                 if variant.model:
                     self._used_models.add(variant.model)
             self.probe_round(task, variants, round_no)
+            self._record_sim(task, variants, round_no)
             for variant in variants:
                 if variant.id not in seen:
                     seen.add(variant.id)
@@ -538,6 +554,39 @@ class HarnessOptimizer:
             passed=bool(best.probe and best.probe.critique_passed),
             needs_human_review=needs_human_review,
         )
+
+    def _record_sim(
+        self, task: str, variants: list[HarnessVariant], round_no: int
+    ) -> None:
+        """Record every probed variant (pass and fail) into SIM."""
+        if self.sim is None:
+            return
+        for variant in variants:
+            probe = variant.probe
+            if probe is None:
+                continue
+            cause = variant.root_cause or (probe.errors[0] if probe.errors else "general")
+            status = "PASS" if probe.critique_passed else "FAIL"
+            observed = f"{status} (tests {probe.tests_passed}/{probe.tests_total}, score={variant.score})"
+            if probe.errors:
+                observed += f" errors={probe.errors[:3]}"
+            model = variant.model or probe.model or self.default_model or "default"
+            self.sim.record(
+                SIMRecord(
+                    root_cause=cause,
+                    label=variant.label,
+                    rationale=variant.rationale,
+                    predicted_outcome=variant.predicted_outcome,
+                    observed_outcome=observed,
+                    passed=probe.critique_passed,
+                    score=variant.score or 0.0,
+                    errors=list(probe.errors),
+                    repo=self.repo_name,
+                    model=model,
+                    round_no=round_no,
+                    task=task,
+                )
+            )
 
     def _triage(
         self,
